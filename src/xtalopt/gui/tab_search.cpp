@@ -208,6 +208,13 @@ void TabSearch::updateGUI()
     ui.cb_tournament->setDisabled(true);
     ui.cb_crowding->setDisabled(true);
     ui.cb_paretoFilterZeroWeights->setDisabled(true);
+  } else if (xtalopt->getOptimizationType() == Search::SearchBase::OT_MOME) {
+    // MOME always selects by cell, then by crowding: only the zero-weight
+    //   filter of the Pareto options applies to it.
+    ui.combo_optType->setCurrentIndex(2);
+    ui.cb_tournament->setDisabled(true);
+    ui.cb_crowding->setDisabled(true);
+    ui.cb_paretoFilterZeroWeights->setEnabled(true);
   }
 
   if (xtalopt->getOptimizationType() == Search::SearchBase::OT_Pareto && ui.cb_tournament->isChecked()) {
@@ -290,6 +297,10 @@ bool TabSearch::updateOptTypeInfo()
     } else if (xtalopt->getOptimizationType() == Search::SearchBase::OT_Pareto) {
       ui.cb_tournament->setEnabled(true);
       ui.cb_crowding->setEnabled(true);
+      ui.cb_paretoFilterZeroWeights->setEnabled(true);
+    } else if (xtalopt->getOptimizationType() == Search::SearchBase::OT_MOME) {
+      ui.cb_tournament->setDisabled(true);
+      ui.cb_crowding->setDisabled(true);
       ui.cb_paretoFilterZeroWeights->setEnabled(true);
     }
 

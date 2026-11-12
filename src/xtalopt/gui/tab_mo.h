@@ -57,12 +57,16 @@ public slots:
   void addConstraint();
   void removeConstraint();
   void updateConstraintsTable();
+  void updateDescriptorsTable();
   void updateFieldsWithOptSelection(QString value_type);
 
 signals:
 
 private:
   Ui::Tab_Mo ui;
+  // MOME descriptors (shown only; they are defined in the input file).
+  QGroupBox* m_groupDescriptors = nullptr;
+  QTableWidget* m_tableDescriptors = nullptr;
 };
 }
 

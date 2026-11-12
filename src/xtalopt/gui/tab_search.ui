@@ -440,7 +440,7 @@
              <enum>Qt::StrongFocus</enum>
             </property>
             <property name="toolTip">
-             <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Specify the optimization type.&lt;/p&gt;&lt;p&gt;Basic uses a scalar weighted fitness. Pareto uses non-dominated sorting, optionally with tournament selection and crowding distance.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
+             <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Specify the optimization type.&lt;/p&gt;&lt;p&gt;Basic uses a scalar weighted fitness. Pareto uses non-dominated sorting, optionally with tournament selection and crowding distance.&lt;/p&gt;&lt;p&gt;MOME (multi-objective MAP-Elites) splits the descriptor space into cells that each keep their own Pareto front; it needs descriptors, which are defined in the input file.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
             </property>
             <item>
              <property name="text">
@@ -450,6 +450,11 @@
             <item>
              <property name="text">
               <string>Pareto</string>
+             </property>
+            </item>
+            <item>
+             <property name="text">
+              <string>MOME</string>
              </property>
             </item>
            </widget>

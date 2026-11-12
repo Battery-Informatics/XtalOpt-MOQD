@@ -22,9 +22,11 @@
 #include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QFileDialog>
+#include <QGroupBox>
 #include <QMessageBox>
 #include <QReadWriteLock>
 #include <QTableWidget>
+#include <QVBoxLayout>
 
 #include <QInputDialog>
 #include <QHeaderView>
@@ -47,6 +49,28 @@ TabMo::TabMo(Search::AbstractDialog* parent, XtalOpt* p)
   ui.table_objectives->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
   ui.table_constraints->setColumnWidth(1, 190);
   ui.table_constraints->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
+  // MOME descriptors: listed below the objectives and constraints. They are
+  //   defined in the input file ("descriptor = ..."), so the table is read-only
+  //   and only shown when there is something to show.
+  m_groupDescriptors = new QGroupBox(tr("MOME descriptors (defined in the input file)"),
+                                     m_tab_widget);
+  m_tableDescriptors = new QTableWidget(0, 6, m_groupDescriptors);
+  m_tableDescriptors->setHorizontalHeaderLabels(
+    { tr("Name"), tr("Script"), tr("Output file"), tr("Min"), tr("Max"), tr("Bins") });
+  m_tableDescriptors->setEditTriggers(QAbstractItemView::NoEditTriggers);
+  m_tableDescriptors->setSelectionMode(QAbstractItemView::NoSelection);
+  m_tableDescriptors->verticalHeader()->setVisible(false);
+  m_tableDescriptors->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
+  m_tableDescriptors->setMaximumHeight(140);
+  m_tableDescriptors->setToolTip(
+    tr("Descriptors span the space that MOME splits into cells. Each one is a script, run "
+       "like an objective script, that writes one number to its output file."));
+  QVBoxLayout* descriptorsLayout = new QVBoxLayout(m_groupDescriptors);
+  descriptorsLayout->addWidget(m_tableDescriptors);
+  // Take only the room the short table needs; the rest stays with the objectives.
+  m_groupDescriptors->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
+  ui.gridLayout_2->addWidget(m_groupDescriptors, ui.gridLayout_2->rowCount(), 0, 1, 2);
+
   const int filtrationIndex = ui.combo_type->findText("Filtration");
   if (filtrationIndex >= 0)
     ui.combo_type->removeItem(filtrationIndex);
@@ -106,6 +130,7 @@ void TabMo::updateGUI()
   // Initiate the objectives table
   updateObjectivesTable();
   updateConstraintsTable();
+  updateDescriptorsTable();
 
   m_updateGuiInProgress = false;
 }
@@ -321,6 +346,36 @@ void TabMo::updateObjectivesTable()
     ui.table_objectives->setItem(i, Oc_PATH, value_path);
     ui.table_objectives->setItem(i, Oc_OUTPUT, value_outf);
     ui.table_objectives->setItem(i, Oc_WEIGHT, value_wegt);
+  }
+}
+
+void TabMo::updateDescriptorsTable()
+{
+  XtalOpt* xtalopt = qobject_cast<XtalOpt*>(m_search);
+  const int numRows = xtalopt->getDescriptorsNum();
+  const bool mome = xtalopt->getOptimizationType() == Search::SearchBase::OT_MOME;
+  const bool cvt = xtalopt->getMomeGridType() == Search::SearchBase::MG_Cvt;
+
+  m_groupDescriptors->setVisible(numRows > 0 || mome);
+  m_groupDescriptors->setTitle(
+    mome ? tr("MOME descriptors (defined in the input file) - %1, at most %2 structures per cell")
+             .arg(cvt ? tr("CVT with %1 cells").arg(xtalopt->getMomeCvtCells()) : tr("grid"))
+             .arg(xtalopt->getMomeMaxFrontSize())
+         : tr("Descriptors (defined in the input file; only used by the MOME optimization type)"));
+
+  m_tableDescriptors->setRowCount(numRows);
+  for (int i = 0; i < numRows; ++i) {
+    m_tableDescriptors->setItem(i, 0, new QTableWidgetItem(xtalopt->getDescriptorName(i)));
+    m_tableDescriptors->setItem(i, 1, new QTableWidgetItem(xtalopt->getDescriptorExe(i)));
+    m_tableDescriptors->setItem(i, 2, new QTableWidgetItem(xtalopt->getDescriptorOut(i)));
+    m_tableDescriptors->setItem(i, 3, new QTableWidgetItem(
+                                        QString::number(xtalopt->getDescriptorMin(i))));
+    m_tableDescriptors->setItem(i, 4, new QTableWidgetItem(
+                                        QString::number(xtalopt->getDescriptorMax(i))));
+    // The bins only matter for the grid tessellation.
+    m_tableDescriptors->setItem(i, 5, new QTableWidgetItem(
+                                        cvt ? QString("-")
+                                            : QString::number(xtalopt->getDescriptorBins(i))));
   }
 }
 
