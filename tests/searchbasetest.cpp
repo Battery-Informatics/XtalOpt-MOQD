@@ -1352,8 +1352,9 @@ void SearchBaseTest::momeArchiveLimitsFrontSize()
   const QList<SearchBase::MomeArchiveCell> archive = m_opt->getMomeArchive();
   QCOMPARE(archive.size(), 1);
   QCOMPARE(archive.first().cell, 0);
-  QCOMPARE(archive.first().members.size(), SearchBase::kMomeMaxFrontSize);
-  QCOMPARE(static_cast<int>(archive.first().crowding.size()), SearchBase::kMomeMaxFrontSize);
+  QCOMPARE(m_opt->getMomeMaxFrontSize(), 10); // default
+  QCOMPARE(archive.first().members.size(), 10);
+  QCOMPARE(static_cast<int>(archive.first().crowding.size()), 10);
   // The two extremes of the front are never the ones dropped.
   QVERIFY(archive.first().members.contains(&elites[0]));
   QVERIFY(archive.first().members.contains(&elites[14]));
@@ -1361,6 +1362,17 @@ void SearchBaseTest::momeArchiveLimitsFrontSize()
   // Selection only ever returns archived structures.
   for (int i = 0; i < 300; ++i)
     QVERIFY(archive.first().members.contains(m_opt->selectParentStructure(1)));
+
+  // The limit is a setting; changing it rebuilds the archive.
+  m_opt->setMomeMaxFrontSize(4);
+  QCOMPARE(m_opt->getMomeArchive().first().members.size(), 4);
+  QVERIFY(m_opt->getMomeArchive().first().members.contains(&elites[0]));
+  QVERIFY(m_opt->getMomeArchive().first().members.contains(&elites[14]));
+  m_opt->setMomeMaxFrontSize(1);
+  QCOMPARE(m_opt->getMomeArchive().first().members.size(), 1);
+  m_opt->setMomeMaxFrontSize(100);
+  QCOMPARE(m_opt->getMomeArchive().first().members.size(), 15);
+  m_opt->setMomeMaxFrontSize(10);
 
   unconfigureMome(m_opt, all);
 }

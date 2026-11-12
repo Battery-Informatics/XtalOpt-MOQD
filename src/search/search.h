@@ -650,7 +650,14 @@ public:
   //
 
   /** Maximum number of structures kept in one cell's Pareto front. */
-  static constexpr int kMomeMaxFrontSize = 10;
+  int getMomeMaxFrontSize() const { return m_momeMaxFrontSize; }
+  void setMomeMaxFrontSize(int v)
+  {
+    if (m_momeMaxFrontSize != v) {
+      m_momeMaxFrontSize = v;
+      markParentSelectionForUpdate();
+    }
+  }
 
   /** @return The tessellation of the descriptor space defined by the descriptors. */
   MomeTessellation momeTessellation() const;
@@ -1493,6 +1500,7 @@ private:
   void rebuildParentSelectionData(const QList<Structure*>& structures);
   bool parentPoolEligible(Structure* s) const;
   void ensureParentSelectionDataCurrent();
+  int m_momeMaxFrontSize = 10;
   ParentSelectionData m_parentSelectionData;
   // Structures eligible as parents: kept up to date by refreshParentPoolMembership.
   QSet<Structure*> m_parentPool;

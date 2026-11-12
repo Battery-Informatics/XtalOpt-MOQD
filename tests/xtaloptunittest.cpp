@@ -1266,6 +1266,8 @@ void XtalOptUnitTest::momeConfiguration()
   {
     XtalOpt opt;
     QVERIFY(opt.setOptimizationTypeText("mome"));
+    QCOMPARE(opt.getMomeMaxFrontSize(), 10);
+    opt.setMomeMaxFrontSize(6);
     QVERIFY(opt.processInputDescriptor("density ./calc_density.sh density.out 0.0 5.0 7"));
     QVERIFY(opt.processInputDescriptor("bandgap ./calc_bandgap.py gap.out 0.0 10.0 13"));
     opt.setInputFormulasString("Ti1O2");
@@ -1282,6 +1284,7 @@ void XtalOptUnitTest::momeConfiguration()
     QCOMPARE(reloaded.getDescriptorsNum(), 2);
     QCOMPARE(reloaded.getDescriptorBins(0), 7);
     QCOMPARE(reloaded.getDescriptorBins(1), 13);
+    QCOMPARE(reloaded.getMomeMaxFrontSize(), 6);
     QVERIFY(reloaded.validateMomeConfiguration());
   }
 }

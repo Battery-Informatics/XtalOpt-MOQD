@@ -211,6 +211,7 @@ const QList<Row>& rows()
     t << repeated("objective", "", false, false, &XtalOpt::objectiveLines, &XtalOpt::processInputObjectives, &XtalOpt::resetObjectives);
     t << repeated("constraint", "", false, false, &XtalOpt::constraintLines, &XtalOpt::processInputConstraint, &XtalOpt::resetConstraints);
     t << repeated("descriptor", "", false, false, &XtalOpt::descriptorLines, &XtalOpt::processInputDescriptor, &XtalOpt::resetDescriptors);
+    t << scalar("momeMaxFrontSize", "10", false, true, &XtalOpt::getMomeMaxFrontSize, &XtalOpt::setMomeMaxFrontSize);
 
     //  Operator weights
     t << scalar("weightPermutomic", "20", false, true, &XtalOpt::getPAtomic, &XtalOpt::setPAtomic);
@@ -721,6 +722,13 @@ bool validateSettings(XtalOpt& opt, InvalidSettingAction invalidAction, const Sc
     if (!handleInvalidSetting(opt, invalidAction, base,
                                "objectivePrecision is invalid (must be between -1 and 24).",
                                {"objectivePrecision"}))
+      valid = false;
+  }
+
+  if (opt.getMomeMaxFrontSize() < 1) {
+    if (!handleInvalidSetting(opt, invalidAction, base,
+                               "momeMaxFrontSize is invalid (must be at least 1).",
+                               {"momeMaxFrontSize"}))
       valid = false;
   }
 

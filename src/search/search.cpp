@@ -1162,7 +1162,7 @@ void SearchBase::rebuildParentSelectionData(const QList<Structure*>& structures)
     }
 
     MomeArchive archive = buildMomeArchive(objData, descData, momeTessellation(),
-                                           kMomeMaxFrontSize);
+                                           m_momeMaxFrontSize);
 
     // Selection is cell-uniform, then crowding-biased inside the cell: the
     //   equivalent per-structure probability is kept for reporting.
@@ -1234,7 +1234,7 @@ void SearchBase::rebuildParentSelectionData(const QList<Structure*>& structures)
     } else if (useMome) {
       debOuts += QString("Optimization type: MOME - Occupied cells: %1 of %2 - Max front size: %3\n")
                    .arg(table.momeCells.size()).arg(momeTessellation().cellCount())
-                   .arg(kMomeMaxFrontSize);
+                   .arg(m_momeMaxFrontSize);
     } else {
       debOuts += QString("Optimization type: Basic\n");
     }
