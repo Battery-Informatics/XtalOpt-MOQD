@@ -358,6 +358,8 @@ public:
   QString failActionText() const;
   bool setFailActionText(const QString& v);
   QString optimizationTypeText() const;
+  QString momeGridText() const;
+  bool setMomeGridText(const QString& v);
   bool setOptimizationTypeText(const QString& v);
   // Read and write the seed structure list.
   QString seedStructuresText() const;

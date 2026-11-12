@@ -1262,12 +1262,55 @@ void XtalOptUnitTest::momeConfiguration()
     QVERIFY(err.contains("cells"));
   }
 
+  // Tessellation type keyword: "grid" (default) or "cvt".
+  {
+    XtalOpt opt;
+    QCOMPARE(opt.momeGridText(), QString("grid"));
+    QVERIFY(opt.setMomeGridText("CVT"));
+    QCOMPARE(opt.momeGridText(), QString("cvt"));
+    QCOMPARE(opt.getMomeGridType(), Search::SearchBase::MG_Cvt);
+    QVERIFY(!opt.setMomeGridText("hexagons"));
+    QCOMPARE(opt.momeGridText(), QString("cvt"));
+    QVERIFY(opt.setMomeGridText("grid"));
+    QCOMPARE(opt.getMomeGridType(), Search::SearchBase::MG_Grid);
+
+    QCOMPARE(opt.getMomeCvtCells(), 200);
+    QCOMPARE(opt.getMomeCvtSamples(), 50000);
+    QCOMPARE(opt.getMomeCvtSeed(), 0);
+  }
+
+  // CVT has its own requirements; the grid size limit does not apply to it.
+  {
+    XtalOpt opt;
+    QVERIFY(opt.setOptimizationTypeText("mome"));
+    QVERIFY(opt.processInputDescriptor("huge ./calc_huge.sh huge.out 0.0 1.0 100000"));
+    QVERIFY(opt.processInputDescriptor("huge2 ./calc_huge.sh huge2.out 0.0 1.0 100000"));
+    QVERIFY(!opt.validateMomeConfiguration()); // 1e10 grid cells
+    QVERIFY(opt.setMomeGridText("cvt"));
+    QVERIFY(opt.validateMomeConfiguration());  // 200 CVT cells
+
+    QString err;
+    opt.setMomeCvtCells(0);
+    QVERIFY(!opt.validateMomeConfiguration(&err));
+    QVERIFY(err.contains("momeCvtCells"));
+    opt.setMomeCvtCells(300);
+    opt.setMomeCvtSamples(100);
+    QVERIFY(!opt.validateMomeConfiguration(&err));
+    QVERIFY(err.contains("momeCvtSamples"));
+    opt.setMomeCvtSamples(300);
+    QVERIFY(opt.validateMomeConfiguration());
+  }
+
   // Save / load input file roundtrip test for the CLI-parsed MOME keywords.
   {
     XtalOpt opt;
     QVERIFY(opt.setOptimizationTypeText("mome"));
     QCOMPARE(opt.getMomeMaxFrontSize(), 10);
     opt.setMomeMaxFrontSize(6);
+    QVERIFY(opt.setMomeGridText("cvt"));
+    opt.setMomeCvtCells(64);
+    opt.setMomeCvtSamples(9000);
+    opt.setMomeCvtSeed(17);
     QVERIFY(opt.processInputDescriptor("density ./calc_density.sh density.out 0.0 5.0 7"));
     QVERIFY(opt.processInputDescriptor("bandgap ./calc_bandgap.py gap.out 0.0 10.0 13"));
     opt.setInputFormulasString("Ti1O2");
@@ -1285,6 +1328,10 @@ void XtalOptUnitTest::momeConfiguration()
     QCOMPARE(reloaded.getDescriptorBins(0), 7);
     QCOMPARE(reloaded.getDescriptorBins(1), 13);
     QCOMPARE(reloaded.getMomeMaxFrontSize(), 6);
+    QCOMPARE(reloaded.getMomeGridType(), Search::SearchBase::MG_Cvt);
+    QCOMPARE(reloaded.getMomeCvtCells(), 64);
+    QCOMPARE(reloaded.getMomeCvtSamples(), 9000);
+    QCOMPARE(reloaded.getMomeCvtSeed(), 17);
     QVERIFY(reloaded.validateMomeConfiguration());
   }
 }

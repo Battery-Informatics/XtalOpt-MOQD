@@ -504,6 +504,8 @@ private slots:
   void momeArchiveLimitsFrontSize();
   void momeParentSelectionIsCellUniform();
   void momeParentSelectionFollowsCrowding();
+  void momeCvtTessellation();
+  void momeCvtCentroidsFileKeepsCellsFixed();
 };
 
 void SearchBaseTest::initTestCase()
@@ -1445,6 +1447,142 @@ void SearchBaseTest::momeParentSelectionFollowsCrowding()
            qPrintable(QString::number(hits.value(&p2) / double(n))));
 
   unconfigureMome(m_opt, all);
+}
+
+void SearchBaseTest::momeCvtTessellation()
+{
+  QVERIFY(m_opt != nullptr);
+  configureMome(m_opt);
+  const QString oldWorkDir = m_opt->getLocWorkDir();
+  m_opt->setLocWorkDir(QString()); // no working directory: nothing is written
+
+  QCOMPARE(m_opt->getMomeGridType(), SearchBase::MG_Grid); // default
+  QCOMPARE(m_opt->momeTessellation().kind, MomeTessellation::Grid);
+  QCOMPARE(m_opt->momeTessellation().cellCount(), 100LL);
+
+  m_opt->setMomeGridType(SearchBase::MG_Cvt);
+  m_opt->setMomeCvtCells(8);
+  m_opt->setMomeCvtSamples(4000);
+  m_opt->setMomeCvtSeed(3);
+  const MomeTessellation tess = m_opt->momeTessellation();
+  QCOMPARE(tess.kind, MomeTessellation::Cvt);
+  QVERIFY(tess.isValid());
+  QCOMPARE(tess.cellCount(), 8LL); // the descriptor bins are not used
+  QVERIFY(m_opt->momeTessellation().centroids == tess.centroids); // placed once
+
+  // Structures land in the cell of their nearest centroid; the archive and
+  //   the selection work exactly as with the grid.
+  Structure a, b, c;
+  makeElite(a, 1.0, 1.0, 5.0, -9.0);
+  makeElite(b, 2.0, 2.0, 5.5, -8.9); // next to a, dominated
+  makeElite(c, 9.0, 9.0, 95.0, 9.0); // opposite corner
+  const QList<Structure*> all = { &a, &b, &c };
+  for (Structure* s : all)
+    m_opt->refreshParentPoolMembership(s);
+
+  const double da[2] = { 5.0, -9.0 }, db[2] = { 5.5, -8.9 }, dc[2] = { 95.0, 9.0 };
+  const int cellA = assignCell(da, tess);
+  QCOMPARE(assignCell(db, tess), cellA);
+  QVERIFY(assignCell(dc, tess) != cellA);
+  QCOMPARE(m_opt->getMomeArchive().size(), 2);
+  QCOMPARE(cellMembers(m_opt, cellA), QList<Structure*>({ &a }));
+  QCOMPARE(cellMembers(m_opt, assignCell(dc, tess)), QList<Structure*>({ &c }));
+  for (int i = 0; i < 200; ++i) {
+    Structure* picked = m_opt->selectParentStructure(1);
+    QVERIFY(picked == &a || picked == &c);
+  }
+
+  // Another seed gives other cells; the same seed gives the same cells back.
+  m_opt->setMomeCvtSeed(4);
+  QVERIFY(m_opt->momeTessellation().centroids != tess.centroids);
+  m_opt->setMomeCvtSeed(3);
+  QVERIFY(m_opt->momeTessellation().centroids == tess.centroids);
+
+  m_opt->setMomeGridType(SearchBase::MG_Grid);
+  m_opt->setMomeCvtCells(200);
+  m_opt->setMomeCvtSamples(50000);
+  m_opt->setMomeCvtSeed(0);
+  m_opt->setLocWorkDir(oldWorkDir);
+  unconfigureMome(m_opt, all);
+}
+
+void SearchBaseTest::momeCvtCentroidsFileKeepsCellsFixed()
+{
+  QTemporaryDir tempDir;
+  QVERIFY(tempDir.isValid());
+
+  auto configureCvt = [&tempDir](DummySearchBase& opt) {
+    configureMome(&opt);
+    opt.setLocWorkDir(tempDir.path());
+    opt.setMomeGridType(SearchBase::MG_Cvt);
+    opt.setMomeCvtCells(5);
+    opt.setMomeCvtSamples(1000);
+    opt.setMomeCvtSeed(11);
+  };
+
+  // A first session places the centroids and writes them to the run directory.
+  DummySearchBase first;
+  configureCvt(first);
+  const QString filename = first.momeCvtCentroidsFile();
+  QCOMPARE(filename, Common::localPath(tempDir.path(), "mome-cvt-centroids.txt"));
+  QVERIFY(!QFile::exists(filename));
+  const MomeTessellation written = first.momeTessellation();
+  QCOMPARE(written.centroids.size(), size_t(5));
+  QVERIFY(QFile::exists(filename));
+
+  QStringList lines;
+  {
+    QFile file(filename);
+    QVERIFY(file.open(QIODevice::ReadOnly | QIODevice::Text));
+    lines = QString::fromUtf8(file.readAll()).split('\n', QtCompat::SkipEmptyParts);
+  }
+  QCOMPARE(lines.first(), QString("# MOME CVT centroids: dims=2 cells=5 samples=1000 seed=11"));
+  QCOMPARE(lines.size(), 2 + 5); // two comment lines, one line per cell
+
+  // A resumed session with the same settings reads the file back exactly ...
+  {
+    DummySearchBase resumed;
+    configureCvt(resumed);
+    QVERIFY(resumed.momeTessellation().centroids == written.centroids);
+  }
+
+  // ... and really uses the file rather than recomputing: hand-edit it.
+  {
+    QFile file(filename);
+    QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Text));
+    file.write((lines.first() + "\n0 0.25 0.5\n1 0.75 0.5\n").toUtf8());
+  }
+  {
+    DummySearchBase resumed;
+    configureCvt(resumed);
+    const MomeTessellation tess = resumed.momeTessellation();
+    QCOMPARE(tess.centroids, std::vector<std::vector<double>>({ { 0.25, 0.5 }, { 0.75, 0.5 } }));
+    const double left[2] = { 10.0, 0.0 }, right[2] = { 90.0, 0.0 };
+    QCOMPARE(assignCell(left, tess), 0);
+    QCOMPARE(assignCell(right, tess), 1);
+  }
+
+  // A file written for other settings is not used: it is replaced.
+  {
+    DummySearchBase other;
+    configureCvt(other);
+    other.setMomeCvtSeed(12);
+    QCOMPARE(other.momeTessellation().centroids.size(), size_t(5));
+    QFile file(filename);
+    QVERIFY(file.open(QIODevice::ReadOnly | QIODevice::Text));
+    QCOMPARE(QString::fromUtf8(file.readLine()).trimmed(),
+             QString("# MOME CVT centroids: dims=2 cells=5 samples=1000 seed=12"));
+  }
+
+  // A read-only session never writes.
+  {
+    QVERIFY(QFile::remove(filename));
+    DummySearchBase readOnly;
+    configureCvt(readOnly);
+    readOnly.setReadOnlyForTest(true);
+    QCOMPARE(readOnly.momeTessellation().centroids.size(), size_t(5));
+    QVERIFY(!QFile::exists(filename));
+  }
 }
 
 void SearchBaseTest::descriptorExecutionAndOutputParsing()

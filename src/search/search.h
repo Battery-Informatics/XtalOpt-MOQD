@@ -659,8 +659,65 @@ public:
     }
   }
 
-  /** @return The tessellation of the descriptor space defined by the descriptors. */
+  /** How the descriptor space is split into cells. */
+  enum MomeGridType
+  {
+    // Regular grid: every descriptor axis is cut into its own number of bins.
+    MG_Grid = 0,
+    // Centroidal Voronoi tessellation: a fixed number of cells of similar
+    //   size, whatever the number of descriptors.
+    MG_Cvt
+  };
+
+  MomeGridType getMomeGridType() const { return m_momeGridType; }
+  void setMomeGridType(MomeGridType v)
+  {
+    if (m_momeGridType != v) {
+      m_momeGridType = v;
+      markParentSelectionForUpdate();
+    }
+  }
+
+  // CVT only: number of cells, number of sample points used to place the
+  //   cell centroids (k-means), and the seed of that (repeatable) placement.
+  int getMomeCvtCells() const { return m_momeCvtCells; }
+  void setMomeCvtCells(int v)
+  {
+    if (m_momeCvtCells != v) {
+      m_momeCvtCells = v;
+      markParentSelectionForUpdate();
+    }
+  }
+  int getMomeCvtSamples() const { return m_momeCvtSamples; }
+  void setMomeCvtSamples(int v)
+  {
+    if (m_momeCvtSamples != v) {
+      m_momeCvtSamples = v;
+      markParentSelectionForUpdate();
+    }
+  }
+  int getMomeCvtSeed() const { return m_momeCvtSeed; }
+  void setMomeCvtSeed(int v)
+  {
+    if (m_momeCvtSeed != v) {
+      m_momeCvtSeed = v;
+      markParentSelectionForUpdate();
+    }
+  }
+
+  /**
+   * @return The tessellation of the descriptor space defined by the
+   * descriptors and the MOME grid settings.
+   *
+   * For CVT, the centroids are placed once and kept: they are read from
+   * momeCvtCentroidsFile() when that file matches the current settings
+   * (so a resumed run keeps its cells), and otherwise computed and written
+   * there.
+   */
   MomeTessellation momeTessellation() const;
+
+  /** @return Path of the CVT centroids file in the working directory (empty if none). */
+  QString momeCvtCentroidsFile() const;
 
   /** One occupied cell of the MOME archive. */
   struct MomeArchiveCell
@@ -1501,6 +1558,14 @@ private:
   bool parentPoolEligible(Structure* s) const;
   void ensureParentSelectionDataCurrent();
   int m_momeMaxFrontSize = 10;
+  MomeGridType m_momeGridType = MG_Grid;
+  int m_momeCvtCells = 200;
+  int m_momeCvtSamples = 50000;
+  int m_momeCvtSeed = 0;
+  // CVT centroids for the settings in m_momeCvtKey (dims, cells, samples, seed).
+  mutable std::mutex m_momeCvtMutex;
+  mutable std::vector<std::vector<double>> m_momeCvtCentroids;
+  mutable std::vector<int> m_momeCvtKey;
   ParentSelectionData m_parentSelectionData;
   // Structures eligible as parents: kept up to date by refreshParentPoolMembership.
   QSet<Structure*> m_parentPool;

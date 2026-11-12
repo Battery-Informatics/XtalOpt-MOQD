@@ -1934,6 +1934,28 @@ bool XtalOpt::validateMomeConfiguration(QString* errorMessage) const
 
   // Keep the grid at a size where "an occupied cell" still means something.
   const long long maxCells = 1000000;
+
+  if (getMomeGridType() == Search::SearchBase::MG_Cvt) {
+    if (getMomeCvtCells() < 1 || getMomeCvtCells() > maxCells) {
+      if (errorMessage)
+        *errorMessage = QString("MOME CVT is invalid: momeCvtCells must be between 1 and %1.")
+                          .arg(maxCells);
+      return false;
+    }
+    if (getMomeCvtSamples() < getMomeCvtCells()) {
+      if (errorMessage)
+        *errorMessage = QString("MOME CVT is invalid: momeCvtSamples cannot be smaller than "
+                                "momeCvtCells.");
+      return false;
+    }
+    if (getMomeCvtSeed() < 0) {
+      if (errorMessage)
+        *errorMessage = QString("MOME CVT is invalid: momeCvtSeed cannot be negative.");
+      return false;
+    }
+    return true;
+  }
+
   long long cells = 1;
   for (int i = 0; i < getDescriptorsNum(); ++i) {
     cells *= getDescriptorBins(i);
@@ -2250,6 +2272,23 @@ bool XtalOpt::setOptimizationTypeText(const QString& v)
     setOptimizationType(Search::SearchBase::OT_Pareto);
   else if (n == "mome")
     setOptimizationType(Search::SearchBase::OT_MOME);
+  else
+    return false;
+  return true;
+}
+
+QString XtalOpt::momeGridText() const
+{
+  return getMomeGridType() == Search::SearchBase::MG_Cvt ? "cvt" : "grid";
+}
+
+bool XtalOpt::setMomeGridText(const QString& v)
+{
+  const QString n = v.trimmed().toLower();
+  if (n == "grid")
+    setMomeGridType(Search::SearchBase::MG_Grid);
+  else if (n == "cvt")
+    setMomeGridType(Search::SearchBase::MG_Cvt);
   else
     return false;
   return true;

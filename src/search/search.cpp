@@ -41,9 +41,11 @@
 #include <common/compatibility/qt_compat.h>
 #include <QDateTime>
 #include <QDir>
+#include <QFile>
 #include <QFileInfo>
 #include <QMetaObject>
 #include <QThread>
+#include <QTextStream>
 #include <QThreadPool>
 #include <QWriteLocker>
 
@@ -1232,7 +1234,8 @@ void SearchBase::rebuildParentSelectionData(const QList<Structure*>& structures)
       else
         debOuts += QString("Crowding: No\n");
     } else if (useMome) {
-      debOuts += QString("Optimization type: MOME - Occupied cells: %1 of %2 - Max front size: %3\n")
+      debOuts += QString("Optimization type: MOME (%1) - Occupied cells: %2 of %3 - Max front size: %4\n")
+                   .arg(m_momeGridType == MG_Cvt ? "cvt" : "grid")
                    .arg(table.momeCells.size()).arg(momeTessellation().cellCount())
                    .arg(m_momeMaxFrontSize);
     } else {
@@ -1279,15 +1282,117 @@ void SearchBase::rebuildParentSelectionData(const QList<Structure*>& structures)
   m_parentSelectionData = std::move(table);
 }
 
+QString SearchBase::momeCvtCentroidsFile() const
+{
+  if (m_locWorkDir.isEmpty())
+    return QString();
+  return Common::localPath(m_locWorkDir, "mome-cvt-centroids.txt");
+}
+
+namespace {
+
+// First line of the centroids file: identifies the settings they belong to.
+QString cvtCentroidsHeader(const std::vector<int>& key)
+{
+  return QString("# MOME CVT centroids: dims=%1 cells=%2 samples=%3 seed=%4")
+    .arg(key[0]).arg(key[1]).arg(key[2]).arg(key[3]);
+}
+
+// Read the centroids if the file was written for the same settings.
+bool readCvtCentroids(const QString& filename, const std::vector<int>& key,
+                      std::vector<std::vector<double>>& centroids)
+{
+  QFile file(filename);
+  if (filename.isEmpty() || !file.open(QIODevice::ReadOnly | QIODevice::Text))
+    return false;
+  QTextStream in(&file);
+  if (in.readLine().trimmed() != cvtCentroidsHeader(key))
+    return false;
+
+  std::vector<std::vector<double>> loaded;
+  while (!in.atEnd()) {
+    const QString line = in.readLine().trimmed();
+    if (line.isEmpty() || line.startsWith('#'))
+      continue;
+    const QStringList fields = line.simplified().split(" ", QtCompat::SkipEmptyParts);
+    if (fields.size() != key[0] + 1) // cell index, then one coordinate per descriptor
+      return false;
+    std::vector<double> c;
+    for (int k = 1; k < fields.size(); ++k) {
+      bool ok = false;
+      const double v = fields.at(k).toDouble(&ok);
+      if (!ok || GS_ISNAN(v) || GS_ISINF(v))
+        return false;
+      c.push_back(v);
+    }
+    loaded.push_back(c);
+  }
+  if (loaded.empty() || static_cast<int>(loaded.size()) > key[1])
+    return false;
+  centroids = std::move(loaded);
+  return true;
+}
+
+bool writeCvtCentroids(const QString& filename, const std::vector<int>& key,
+                       const std::vector<std::vector<double>>& centroids)
+{
+  QFile file(filename);
+  if (filename.isEmpty() || !file.open(QIODevice::WriteOnly | QIODevice::Text))
+    return false;
+  QTextStream out(&file);
+  out << cvtCentroidsHeader(key) << "\n";
+  out << "# cell, then its centroid in bounds-normalized descriptor coordinates "
+         "(0 = descriptor min, 1 = descriptor max)\n";
+  for (size_t c = 0; c < centroids.size(); ++c) {
+    out << c;
+    for (double v : centroids[c])
+      out << " " << QString::number(v, 'g', std::numeric_limits<double>::max_digits10);
+    out << "\n";
+  }
+  return true;
+}
+
+} // namespace
+
 MomeTessellation SearchBase::momeTessellation() const
 {
   MomeTessellation tess;
-  tess.kind = MomeTessellation::Grid;
   for (int i = 0; i < getDescriptorsNum(); ++i) {
     tess.lo.push_back(getDescriptorMin(i));
     tess.hi.push_back(getDescriptorMax(i));
     tess.bins.push_back(getDescriptorBins(i));
   }
+
+  if (m_momeGridType != MG_Cvt) {
+    tess.kind = MomeTessellation::Grid;
+    return tess;
+  }
+
+  tess.kind = MomeTessellation::Cvt;
+  const std::vector<int> key = { getDescriptorsNum(), m_momeCvtCells, m_momeCvtSamples,
+                                 m_momeCvtSeed };
+  std::lock_guard<std::mutex> lock(m_momeCvtMutex);
+  if (m_momeCvtKey != key) {
+    const QString filename = momeCvtCentroidsFile();
+    std::vector<std::vector<double>> centroids;
+    if (readCvtCentroids(filename, key, centroids)) {
+      Common::message(QString("MOME: read %1 CVT centroids from %2")
+                        .arg(centroids.size()).arg(filename));
+    } else {
+      centroids = buildCvtCentroids(key[0], key[1], key[2], static_cast<unsigned int>(key[3]));
+      if (!centroids.empty() && !isReadOnly() && !filename.isEmpty() &&
+          QFileInfo(m_locWorkDir).isDir()) {
+        if (writeCvtCentroids(filename, key, centroids))
+          Common::message(QString("MOME: wrote %1 CVT centroids to %2")
+                            .arg(centroids.size()).arg(filename));
+        else
+          Common::warning(QString("MOME: failed to write the CVT centroids to %1").arg(filename));
+      }
+    }
+    m_momeCvtCentroids = std::move(centroids);
+    m_momeCvtKey = key;
+  }
+  tess.centroids = m_momeCvtCentroids;
   return tess;
 }
 

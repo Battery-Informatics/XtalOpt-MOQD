@@ -212,6 +212,10 @@ const QList<Row>& rows()
     t << repeated("constraint", "", false, false, &XtalOpt::constraintLines, &XtalOpt::processInputConstraint, &XtalOpt::resetConstraints);
     t << repeated("descriptor", "", false, false, &XtalOpt::descriptorLines, &XtalOpt::processInputDescriptor, &XtalOpt::resetDescriptors);
     t << scalar("momeMaxFrontSize", "10", false, true, &XtalOpt::getMomeMaxFrontSize, &XtalOpt::setMomeMaxFrontSize);
+    t << scalar("momeGrid", "grid", false, true, &XtalOpt::momeGridText, &XtalOpt::setMomeGridText);
+    t << scalar("momeCvtCells", "200", false, true, &XtalOpt::getMomeCvtCells, &XtalOpt::setMomeCvtCells);
+    t << scalar("momeCvtSamples", "50000", false, true, &XtalOpt::getMomeCvtSamples, &XtalOpt::setMomeCvtSamples);
+    t << scalar("momeCvtSeed", "0", false, true, &XtalOpt::getMomeCvtSeed, &XtalOpt::setMomeCvtSeed);
 
     //  Operator weights
     t << scalar("weightPermutomic", "20", false, true, &XtalOpt::getPAtomic, &XtalOpt::setPAtomic);
@@ -729,6 +733,27 @@ bool validateSettings(XtalOpt& opt, InvalidSettingAction invalidAction, const Sc
     if (!handleInvalidSetting(opt, invalidAction, base,
                                "momeMaxFrontSize is invalid (must be at least 1).",
                                {"momeMaxFrontSize"}))
+      valid = false;
+  }
+
+  if (opt.getMomeCvtCells() < 1) {
+    if (!handleInvalidSetting(opt, invalidAction, base,
+                               "momeCvtCells is invalid (must be at least 1).",
+                               {"momeCvtCells"}))
+      valid = false;
+  }
+
+  if (opt.getMomeCvtSamples() < 1) {
+    if (!handleInvalidSetting(opt, invalidAction, base,
+                               "momeCvtSamples is invalid (must be at least 1).",
+                               {"momeCvtSamples"}))
+      valid = false;
+  }
+
+  if (opt.getMomeCvtSeed() < 0) {
+    if (!handleInvalidSetting(opt, invalidAction, base,
+                               "momeCvtSeed is invalid (cannot be negative).",
+                               {"momeCvtSeed"}))
       valid = false;
   }
 
