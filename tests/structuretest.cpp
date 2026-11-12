@@ -408,6 +408,9 @@ void StructureTest::workflowStateCycle()
   saved->setStrucConstraintValues(constraintValue);
   saved->setStrucConstraintState(Structure::Cs_Dismiss);
   saved->setStrucConstraintRedoCount(1);
+  const double descriptorValue = 3.9724170123456789;
+  saved->setStrucDescriptorValuesVec({ descriptorValue, -12.0 });
+  saved->setStrucDescriptorState(Structure::Ds_Retain);
 
   QVERIFY(producer.tracker()->append(saved));
   QVERIFY(producer.saveSessionState(stateFile, false));
@@ -440,6 +443,10 @@ void StructureTest::workflowStateCycle()
   QCOMPARE(loaded->getStrucConstraintValues(0), constraintValue);
   QCOMPARE(loaded->getStrucConstraintState(), Structure::Cs_Dismiss);
   QCOMPARE(loaded->getStrucConstraintRedoCount(), 1);
+  QCOMPARE(loaded->getStrucDescriptorNumber(), 2);
+  QCOMPARE(loaded->getStrucDescriptorValues(0), descriptorValue);
+  QCOMPARE(loaded->getStrucDescriptorValues(1), -12.0);
+  QCOMPARE(loaded->getStrucDescriptorState(), Structure::Ds_Retain);
   QCOMPARE(loaded->numAtoms(), static_cast<size_t>(1));
   QCOMPARE(loaded->atom(0).atomicNumber(), static_cast<unsigned short>(8));
   QCOMPARE(loaded->atom(0).pos().x(), position.x());

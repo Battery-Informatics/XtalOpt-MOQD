@@ -708,6 +708,19 @@ bool readStructureStateWorkflow(Xtal& xtal, const QString& filename)
     xtal.setStrucConstraintState(Structure::ConstraintState(
       settings->value("constraintsState", 0).toInt()));
     xtal.setStrucConstraintRedoCount(settings->value("constraintRedoCount", 0).toInt());
+
+    // Descriptors: stored like the constraints (values and their state).
+    xtal.resetStrucDescriptor();
+    size = settings->beginReadArray("descriptors");
+    QList<double> descriptorValues;
+    for (int i = 0; i < size; i++) {
+      settings->setArrayIndex(i);
+      descriptorValues.append(settings->value("value").toDouble());
+    }
+    settings->endArray();
+    xtal.setStrucDescriptorValuesVec(descriptorValues);
+    xtal.setStrucDescriptorState(Structure::DescriptorState(
+      settings->value("descriptorsState", 0).toInt()));
     xtal.setCurrentOptStep(currentOptStep);
     xtal.setStatus(static_cast<Structure::State>(loadedStatusValue));
     if (xtal.getStatus() == Structure::Restart)
@@ -1400,6 +1413,17 @@ void writeStructureStateFile(Xtal& xtal, const QString& filename)
   settings->endArray();
   settings->setValue("constraintsState", xtal.getStrucConstraintState());
   settings->setValue("constraintRedoCount", xtal.getStrucConstraintRedoCount());
+
+  // Descriptors: values and their state.
+  settings->remove("descriptors");
+  settings->beginWriteArray("descriptors");
+  for (int i = 0; i < xtal.getStrucDescriptorNumber(); i++) {
+    settings->setArrayIndex(i);
+    settings->setValue("value", QString::number(xtal.getStrucDescriptorValues(i), 'g',
+                       std::numeric_limits<double>::max_digits10));
+  }
+  settings->endArray();
+  settings->setValue("descriptorsState", xtal.getStrucDescriptorState());
 
   settings->setValue("reusePreoptBonding", xtal.reusePreoptBonding());
   settings->remove("preoptBonds");
