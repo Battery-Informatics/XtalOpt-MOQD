@@ -1,6 +1,7 @@
 set(search_core_SRCS
     search.cpp
     selection.cpp
+    mome.cpp
     optsteps.cpp
     search_objectives.cpp
     search_templates.cpp

@@ -19,6 +19,7 @@ set(atoms_test_libs               atoms_core)
 set(searchbase_test_libs          search_core)
 set(searchbase_test_labels        queue)
 set(momegrid_test_libs            search_core)
+set(mome_test_libs                search_core)
 set(paretoset_test_libs           search_core)
 set(structure_test_libs           xtalopt_core)
 set(spglib_test_libs              xtalopt_core)
@@ -42,6 +43,7 @@ set(tests
   atoms
   searchbase
   momegrid
+  mome
   paretoset
   structure
   spglib
