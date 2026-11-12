@@ -19,7 +19,7 @@
 #include <common/compatibility/platform_compat.h>
 #include <common/output.h>
 
-#include <search/momegrid.h>
+#include <search/mome.h>
 #include <search/optsteps.h>
 
 #include <QHash>
@@ -196,8 +196,9 @@ public:
     OT_Basic = 0,
     // Pareto optimization
     OT_Pareto,
-    // Multi-Objective MAP-Elites: a 2-D descriptor grid (see MOMEGrid) with
-    // a per-cell Pareto archive, replacing whole-population Pareto ranking.
+    // MOME-X (Multi-Objective MAP-Elites with crowding): the descriptor
+    // space is split into cells, each keeping its own size-limited Pareto
+    // front; parents are drawn cell-uniformly, then crowding-biased.
     OT_MOME
   };
 
@@ -613,6 +614,7 @@ public:
                      int bins = 10)
   {
     m_descriptors.push_back(DescriptorInfo(name, exe, out, min, max, bins));
+    markParentSelectionForUpdate();
   }
 
   int getDescriptorsNum() const { return m_descriptors.size(); }
@@ -622,71 +624,51 @@ public:
   double  getDescriptorMin(int i) const { return m_descriptors.at(i).min; }
   double  getDescriptorMax(int i) const { return m_descriptors.at(i).max; }
   int     getDescriptorBins(int i) const { return m_descriptors.at(i).bins; }
-  void resetDescriptors() { m_descriptors.clear(); }
-  void removeDescriptor(int i) { m_descriptors.removeAt(i); }
+  void resetDescriptors()
+  {
+    m_descriptors.clear();
+    markParentSelectionForUpdate();
+  }
+  void removeDescriptor(int i)
+  {
+    m_descriptors.removeAt(i);
+    markParentSelectionForUpdate();
+  }
 
   //
-  // MOME archive: 2-D descriptor grid with a per-cell Pareto set (see
-  // MOMEGrid). Active only when getOptimizationType() == OT_MOME, in which
-  // case it uses descriptor[0]/descriptor[1] as its two axes and replaces
-  // whole-population Pareto-front ranking for parent selection.
+  // MOME archive. Active only when getOptimizationType() == OT_MOME. The
+  // descriptors span the descriptor space, which is tessellated into cells
+  // (see momeTessellation()); every cell keeps the first Pareto front of
+  // the parent-pool structures mapped to it, truncated by crowding.
+  //
+  // The archive is not stored: it is rebuilt from the parent pool together
+  // with the rest of the parent-selection data whenever the pool or a
+  // relevant setting changes. Objective values that change after a
+  // structure finished (e.g. the distance above hull) are therefore always
+  // judged on their current values, and a resumed run gets its archive back
+  // as soon as its structures are loaded.
   //
 
-  /**
-   * (Re)build an empty MOME archive sized by the bins of descriptor[0] x
-   * descriptor[1] when getOptimizationType() == OT_MOME, or clear it
-   * (leaving it absent) otherwise. Called once at the start of every
-   * session (see deleteTrackedStructures()), so the archive is never
-   * persisted or carried over between runs.
-   */
-  void resetMomeArchive()
+  /** Maximum number of structures kept in one cell's Pareto front. */
+  static constexpr int kMomeMaxFrontSize = 10;
+
+  /** @return The tessellation of the descriptor space defined by the descriptors. */
+  MomeTessellation momeTessellation() const;
+
+  /** One occupied cell of the MOME archive. */
+  struct MomeArchiveCell
   {
-    QWriteLocker locker(&m_momeArchiveLock);
-    if (m_optimizationType == OT_MOME)
-      m_momeArchive.reset(new MOMEGrid(getDescriptorsNum() > 0 ? getDescriptorBins(0) : 1,
-                                       getDescriptorsNum() > 1 ? getDescriptorBins(1) : 1));
-    else
-      m_momeArchive.reset();
-  }
+    int cell = -1;                // cell index in momeTessellation()
+    QList<Structure*> members;    // the cell's (size-limited) Pareto front
+    std::vector<double> crowding; // raw crowding distance of each member
+  };
 
   /**
-   * Map @p structure's descriptor values (@p d0, @p d1) to its MOME cell,
-   * using the bounds already configured on descriptor[0]/descriptor[1]
-   * (see DescriptorInfo), then attempt to insert it there based on
-   * @p objectives.
-   *
-   * @return true if inserted. Returns false without effect when MOME is
-   * not the active optimization type, no archive has been built yet (see
-   * resetMomeArchive()), or MOMEGrid::insertCandidate() itself rejects
-   * the candidate (see its documentation for why).
+   * @return The occupied cells of the current MOME archive, ordered by cell
+   * index (brought up to date first, if needed). Empty when MOME is not the
+   * active optimization type or nothing is archived yet.
    */
-  bool insertIntoMomeArchive(double d0, double d1, const std::vector<double>& objectives,
-                             Structure* structure, int& x, int& y)
-  {
-    QWriteLocker locker(&m_momeArchiveLock);
-    if (!m_momeArchive)
-      return false;
-    return m_momeArchive->insertCandidate(d0, getDescriptorMin(0), getDescriptorMax(0),
-                                          d1, getDescriptorMin(1), getDescriptorMax(1),
-                                          objectives, structure, x, y);
-  }
-
-  /**
-   * @return The number of structures currently held in the MOME archive
-   * cell (@p x, @p y). Returns -1 if no archive has been built yet (see
-   * resetMomeArchive()) or (@p x, @p y) is out of range.
-   *
-   * Diagnostic read access only (used by tests); a later step will give
-   * parent selection whatever richer read access it actually needs.
-   */
-  int momeArchiveCellSize(int x, int y) const
-  {
-    QReadLocker locker(&m_momeArchiveLock);
-    if (!m_momeArchive)
-      return -1;
-    const MOMECell* c = m_momeArchive->cell(x, y);
-    return c ? c->size() : -1;
-  }
+  QList<MomeArchiveCell> getMomeArchive();
 
   //
   // QueueManager settings
@@ -1487,8 +1469,6 @@ private:
   bool m_paretoFilterZeroWeights;
 
   // MOME archive (only built/used when m_optimizationType == OT_MOME).
-  std::unique_ptr<MOMEGrid> m_momeArchive;
-  mutable QReadWriteLock m_momeArchiveLock;
 
   // Keep the parent-selection data so it is not recalculated for every parent.
   struct ParentSelectionData
@@ -1499,6 +1479,11 @@ private:
     std::vector<double> distances;
     std::vector<double> probs;
     bool usePareto = false;
+    bool useMome = false;
+    // MOME only: occupied cells (members are indices into pool) and the
+    //   cell index of every pool member (-1 if it could not be assigned).
+    std::vector<MomeCell> momeCells;
+    std::vector<int> momeCellOf;
     bool noObjectives = false;
     bool valid = true;
     long long stamp = -1;
@@ -1507,7 +1492,7 @@ private:
 
   void rebuildParentSelectionData(const QList<Structure*>& structures);
   bool parentPoolEligible(Structure* s) const;
-  Structure* selectParentFromMomeArchive() const;
+  void ensureParentSelectionDataCurrent();
   ParentSelectionData m_parentSelectionData;
   // Structures eligible as parents: kept up to date by refreshParentPoolMembership.
   QSet<Structure*> m_parentPool;

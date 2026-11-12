@@ -500,8 +500,10 @@ private slots:
   void descriptorDataStructure();
   void descriptorExecutionAndOutputParsing();
   void queueManagerRunsDescriptorLifecycle();
-  void momeArchiveWiring();
-  void momeParentSelection();
+  void momeArchiveIsRebuiltFromPool();
+  void momeArchiveLimitsFrontSize();
+  void momeParentSelectionIsCellUniform();
+  void momeParentSelectionFollowsCrowding();
 };
 
 void SearchBaseTest::initTestCase()
@@ -1231,100 +1233,206 @@ void SearchBaseTest::descriptorDataStructure()
   QCOMPARE(m_opt->getDescriptorsNum(), 0);
 }
 
-void SearchBaseTest::momeArchiveWiring()
+namespace {
+
+// Two minimized objectives and two descriptors: d0 in [0, 100] and d1 in
+//   [-10, 10], 10 bins each. Cell index = bin(d0) * 10 + bin(d1).
+void configureMome(SearchBase* opt)
 {
-  QVERIFY(m_opt != nullptr);
-
-  Structure a, b;
-  int x = -1, y = -1;
-
-  // Not MOME: insertion is always a no-op, even right after
-  // resetMomeArchive().
-  m_opt->setOptimizationType(Search::SearchBase::OT_Basic);
-  m_opt->resetMomeArchive();
-  QVERIFY(!m_opt->insertIntoMomeArchive(1.0, 1.0, { 1.0, 1.0 }, &a, x, y));
-
-  // MOME selected, but resetMomeArchive() has not been called since
-  // switching: no archive exists yet, so insertion is still a no-op.
-  m_opt->setOptimizationType(Search::SearchBase::OT_MOME);
-  QVERIFY(!m_opt->insertIntoMomeArchive(1.0, 1.0, { 1.0, 1.0 }, &a, x, y));
-
-  // Configure the two MOME axes' bounds via the existing descriptor list:
-  // MOMEGrid never keeps its own copy of these bounds.
-  m_opt->resetDescriptors();
-  m_opt->addDescriptor("d0", "/bin/true", "d0.out", 0.0, 100.0);
-  m_opt->addDescriptor("d1", "/bin/true", "d1.out", -10.0, 10.0);
-  m_opt->resetMomeArchive();
-
-  QVERIFY(m_opt->insertIntoMomeArchive(50.0, 0.0, { 1.0, 1.0 }, &a, x, y));
-  QCOMPARE(x, 5);
-  QCOMPARE(y, 5);
-
-  // A dominated candidate landing in the same cell is rejected.
-  QVERIFY(!m_opt->insertIntoMomeArchive(51.0, 1.0, { 2.0, 2.0 }, &b, x, y));
-
-  // resetMomeArchive() clears the archive: the same candidate that just
-  // succeeded above is accepted again in a fresh archive.
-  m_opt->resetMomeArchive();
-  QVERIFY(m_opt->insertIntoMomeArchive(50.0, 0.0, { 1.0, 1.0 }, &a, x, y));
-
-  // Switching away from MOME and rebuilding drops the archive entirely.
-  m_opt->setOptimizationType(Search::SearchBase::OT_Basic);
-  m_opt->resetMomeArchive();
-  QVERIFY(!m_opt->insertIntoMomeArchive(50.0, 0.0, { 1.0, 1.0 }, &a, x, y));
+  opt->setOptimizationType(Search::SearchBase::OT_MOME);
+  opt->resetObjectives();
+  opt->addObjective(SearchBase::Ot_Min, QString(), QString(), 0.5);
+  opt->addObjective(SearchBase::Ot_Min, QString(), QString(), 0.5);
+  opt->resetDescriptors();
+  opt->addDescriptor("d0", "/bin/true", "d0.out", 0.0, 100.0, 10);
+  opt->addDescriptor("d1", "/bin/true", "d1.out", -10.0, 10.0, 10);
 }
 
-void SearchBaseTest::momeParentSelection()
+void unconfigureMome(SearchBase* opt, const QList<Structure*>& structures)
+{
+  // Anything that is not optimized leaves the parent pool.
+  for (Structure* s : structures) {
+    s->setStatus(Structure::Removed);
+    opt->refreshParentPoolMembership(s);
+  }
+  opt->resetDescriptors();
+  opt->resetObjectives();
+  opt->setOptimizationType(Search::SearchBase::OT_Basic);
+}
+
+// An optimized structure with its objective and descriptor values in place.
+void makeElite(Structure& s, double o0, double o1, double d0, double d1)
+{
+  s.setStatus(Structure::Optimized);
+  s.setStrucObjValuesVec({ o0, o1 });
+  s.setStrucDescriptorValuesVec({ d0, d1 });
+  s.setStrucDescriptorState(Structure::Ds_Retain);
+}
+
+QList<Structure*> cellMembers(SearchBase* opt, int cell)
+{
+  for (const SearchBase::MomeArchiveCell& c : opt->getMomeArchive()) {
+    if (c.cell == cell)
+      return c.members;
+  }
+  return {};
+}
+
+QSet<Structure*> memberSet(SearchBase* opt, int cell)
+{
+  const QList<Structure*> members = cellMembers(opt, cell);
+  return QSet<Structure*>(members.begin(), members.end());
+}
+
+} // namespace
+
+void SearchBaseTest::momeArchiveIsRebuiltFromPool()
 {
   QVERIFY(m_opt != nullptr);
+  configureMome(m_opt);
 
-  m_opt->setOptimizationType(Search::SearchBase::OT_MOME);
-  m_opt->resetDescriptors();
-  m_opt->addDescriptor("d0", "/bin/true", "d0.out", 0.0, 100.0);
-  m_opt->addDescriptor("d1", "/bin/true", "d1.out", -10.0, 10.0);
-  m_opt->resetMomeArchive();
-
-  // An empty archive has nothing to select from.
+  // Nothing in the pool: no archive, nothing to select.
+  QVERIFY(m_opt->getMomeArchive().isEmpty());
   QVERIFY(m_opt->selectParentStructure(1) == nullptr);
 
-  Structure a, b, c;
-  int x = -1, y = -1;
+  Structure a, b, c, d, e, noDesc;
+  makeElite(a, 1.0, 1.0, 50.0, 0.0);    // cell 55
+  makeElite(b, 2.0, 2.0, 51.0, 1.0);    // cell 55, dominated by a
+  makeElite(c, 2.0, 0.5, 51.0, 1.0);    // cell 55, not dominated
+  makeElite(d, 9.0, 9.0, 90.0, -5.0);   // cell 92: worst objectives overall, alone in its cell
+  makeElite(e, 5.0, 5.0, 500.0, 50.0);  // out of bounds: clamped to the corner cell 99
+  noDesc.setStatus(Structure::Optimized);
+  noDesc.setStrucObjValuesVec({ 0.0, 0.0 }); // best objectives, but no descriptors
 
-  // Single occupied cell, single member: selection is deterministic.
-  QVERIFY(m_opt->insertIntoMomeArchive(50.0, 0.0, { 1.0, 1.0 }, &a, x, y));
-  QCOMPARE(x, 5);
-  QCOMPARE(y, 5);
-  for (int i = 0; i < 20; ++i)
-    QCOMPARE(m_opt->selectParentStructure(1), &a);
+  const QList<Structure*> all = { &a, &b, &c, &d, &e, &noDesc };
+  for (Structure* s : all)
+    m_opt->refreshParentPoolMembership(s);
 
-  // Same cell, second mutually non-dominated member: selection always
-  // returns one of the two, never anything else.
-  QVERIFY(m_opt->insertIntoMomeArchive(51.0, 1.0, { 2.0, 0.5 }, &b, x, y));
-  QCOMPARE(m_opt->momeArchiveCellSize(5, 5), 2);
-  for (int i = 0; i < 50; ++i) {
-    Structure* picked = m_opt->selectParentStructure(1);
-    QVERIFY(picked == &a || picked == &b);
+  // A structure without descriptor values cannot be a MOME parent.
+  QCOMPARE(m_opt->getParentPoolSize(), 5);
+
+  QCOMPARE(m_opt->getMomeArchive().size(), 3);
+  QCOMPARE(memberSet(m_opt, 55), QSet<Structure*>({ &a, &c }));
+  QCOMPARE(cellMembers(m_opt, 92), QList<Structure*>({ &d }));
+  QCOMPARE(cellMembers(m_opt, 99), QList<Structure*>({ &e }));
+  QVERIFY(cellMembers(m_opt, 0).isEmpty());
+
+  // Objective values that change after a structure finished (as the
+  //   distance above hull does) are picked up: b now dominates a and c.
+  b.setStrucObjValuesVec({ 0.5, 0.5 });
+  m_opt->markParentSelectionForUpdate();
+  QCOMPARE(cellMembers(m_opt, 55), QList<Structure*>({ &b }));
+
+  // The archive only ever holds parent-pool structures.
+  b.setStatus(Structure::Removed);
+  m_opt->refreshParentPoolMembership(&b);
+  QCOMPARE(memberSet(m_opt, 55), QSet<Structure*>({ &a, &c }));
+
+  // Other optimization types have no archive.
+  m_opt->setOptimizationType(Search::SearchBase::OT_Pareto);
+  QVERIFY(m_opt->getMomeArchive().isEmpty());
+
+  unconfigureMome(m_opt, all);
+}
+
+void SearchBaseTest::momeArchiveLimitsFrontSize()
+{
+  QVERIFY(m_opt != nullptr);
+  configureMome(m_opt);
+
+  // 15 mutually non-dominated structures in one cell.
+  QVector<Structure> elites(15);
+  QList<Structure*> all;
+  for (int i = 0; i < elites.size(); ++i) {
+    makeElite(elites[i], i, 14 - i, 5.0, -9.0);
+    all << &elites[i];
+    m_opt->refreshParentPoolMembership(&elites[i]);
   }
 
-  // A second, distinct occupied cell: selection must be uniform over
-  // *occupied cells*, not over archived structures, so with only 2 cells
-  // (one holding 2 structures, the other holding 1), the single-member
-  // cell's structure must be reachable about as often as the 2-member
-  // cell as a whole.
-  QVERIFY(m_opt->insertIntoMomeArchive(90.0, -5.0, { 0.0, 0.0 }, &c, x, y));
-  QCOMPARE(x, 9);
-  QCOMPARE(y, 2);
+  const QList<SearchBase::MomeArchiveCell> archive = m_opt->getMomeArchive();
+  QCOMPARE(archive.size(), 1);
+  QCOMPARE(archive.first().cell, 0);
+  QCOMPARE(archive.first().members.size(), SearchBase::kMomeMaxFrontSize);
+  QCOMPARE(static_cast<int>(archive.first().crowding.size()), SearchBase::kMomeMaxFrontSize);
+  // The two extremes of the front are never the ones dropped.
+  QVERIFY(archive.first().members.contains(&elites[0]));
+  QVERIFY(archive.first().members.contains(&elites[14]));
 
-  bool sawA = false, sawB = false, sawC = false;
-  for (int i = 0; i < 300; ++i) {
-    Structure* picked = m_opt->selectParentStructure(1);
-    QVERIFY(picked == &a || picked == &b || picked == &c);
-    if (picked == &a) sawA = true;
-    else if (picked == &b) sawB = true;
-    else if (picked == &c) sawC = true;
-  }
-  QVERIFY(sawA || sawB); // the (5,5) cell was reachable
-  QVERIFY(sawC);         // the (9,2) cell was reachable too
+  // Selection only ever returns archived structures.
+  for (int i = 0; i < 300; ++i)
+    QVERIFY(archive.first().members.contains(m_opt->selectParentStructure(1)));
+
+  unconfigureMome(m_opt, all);
+}
+
+void SearchBaseTest::momeParentSelectionIsCellUniform()
+{
+  QVERIFY(m_opt != nullptr);
+  configureMome(m_opt);
+
+  // Cell 55 holds a front of two; cells 92 and 99 one structure each, and
+  //   cell 55 also has a dominated structure that is never a parent.
+  Structure a, b, c, d, e;
+  makeElite(a, 1.0, 1.0, 50.0, 0.0);
+  makeElite(b, 2.0, 2.0, 51.0, 1.0);
+  makeElite(c, 2.0, 0.5, 51.0, 1.0);
+  makeElite(d, 9.0, 9.0, 90.0, -5.0);
+  makeElite(e, 5.0, 5.0, 99.0, 9.0);
+  const QList<Structure*> all = { &a, &b, &c, &d, &e };
+  for (Structure* s : all)
+    m_opt->refreshParentPoolMembership(s);
+
+  QHash<Structure*, int> hits;
+  const int n = 30000;
+  for (int i = 0; i < n; ++i)
+    ++hits[m_opt->selectParentStructure(1)];
+
+  QCOMPARE(hits.value(&b), 0);
+  QCOMPARE(hits.value(nullptr), 0);
+  // Every occupied cell gets a third of the picks, however many (or how
+  //   good) its structures are.
+  QVERIFY(std::fabs((hits.value(&a) + hits.value(&c)) / double(n) - 1.0 / 3.0) < 0.02);
+  QVERIFY(std::fabs(hits.value(&d) / double(n) - 1.0 / 3.0) < 0.02);
+  QVERIFY(std::fabs(hits.value(&e) / double(n) - 1.0 / 3.0) < 0.02);
+  // A front of two has no crowding information: a and c are equally likely.
+  QVERIFY(std::fabs(hits.value(&a) / double(n) - 1.0 / 6.0) < 0.02);
+
+  unconfigureMome(m_opt, all);
+}
+
+void SearchBaseTest::momeParentSelectionFollowsCrowding()
+{
+  QVERIFY(m_opt != nullptr);
+  configureMome(m_opt);
+
+  // One cell, a front of five. Raw crowding distances are
+  //   inf, 1.0, 0.4, 1.0, inf  ->  selection weights 1, 1, 0.4, 1, 1:
+  //   the structure in the crowded middle of the front is picked less.
+  Structure p0, p1, p2, p3, p4;
+  makeElite(p0, 0.0, 10.0, 5.0, -9.0);
+  makeElite(p1, 4.0, 6.0, 5.0, -9.0);
+  makeElite(p2, 5.0, 5.0, 5.0, -9.0);
+  makeElite(p3, 6.0, 4.0, 5.0, -9.0);
+  makeElite(p4, 10.0, 0.0, 5.0, -9.0);
+  const QList<Structure*> all = { &p0, &p1, &p2, &p3, &p4 };
+  for (Structure* s : all)
+    m_opt->refreshParentPoolMembership(s);
+
+  QCOMPARE(m_opt->getMomeArchive().size(), 1);
+  QCOMPARE(m_opt->getMomeArchive().first().members.size(), 5);
+
+  QHash<Structure*, int> hits;
+  const int n = 40000;
+  for (int i = 0; i < n; ++i)
+    ++hits[m_opt->selectParentStructure(1)];
+
+  for (Structure* s : { &p0, &p1, &p3, &p4 })
+    QVERIFY2(std::fabs(hits.value(s) / double(n) - 1.0 / 4.4) < 0.02,
+             qPrintable(QString::number(hits.value(s) / double(n))));
+  QVERIFY2(std::fabs(hits.value(&p2) / double(n) - 0.4 / 4.4) < 0.02,
+           qPrintable(QString::number(hits.value(&p2) / double(n))));
+
+  unconfigureMome(m_opt, all);
 }
 
 void SearchBaseTest::descriptorExecutionAndOutputParsing()

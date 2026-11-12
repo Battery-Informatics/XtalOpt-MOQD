@@ -1238,23 +1238,28 @@ void XtalOptUnitTest::momeConfiguration()
     QVERIFY(opt.validateMomeConfiguration()); // still fine: only 1, but not MOME
   }
 
-  // MOME requires exactly 2 configured descriptors.
+  // MOME requires at least 1 descriptor (any number of dimensions) and a
+  // grid that is not absurdly large.
   {
     XtalOpt opt;
     QVERIFY(opt.setOptimizationTypeText("mome"));
 
     QString err;
     QVERIFY(!opt.validateMomeConfiguration(&err)); // 0 descriptors
-    QVERIFY(err.contains("2"));
+    QVERIFY(err.contains("descriptor"));
 
     QVERIFY(opt.processInputDescriptor("density ./calc_density.sh density.out 0.0 5.0 10"));
-    QVERIFY(!opt.validateMomeConfiguration()); // 1 descriptor: still invalid
+    QVERIFY(opt.validateMomeConfiguration()); // 1-D grid
 
     QVERIFY(opt.processInputDescriptor("bandgap ./calc_bandgap.py gap.out 0.0 10.0 10"));
-    QVERIFY(opt.validateMomeConfiguration()); // exactly 2: valid
+    QVERIFY(opt.validateMomeConfiguration()); // 2-D grid
 
     QVERIFY(opt.processInputDescriptor("extra ./calc_extra.sh extra.out 0.0 1.0 10"));
-    QVERIFY(!opt.validateMomeConfiguration()); // 3 descriptors: invalid again
+    QVERIFY(opt.validateMomeConfiguration()); // 3-D grid: 1000 cells
+
+    QVERIFY(opt.processInputDescriptor("huge ./calc_huge.sh huge.out 0.0 1.0 100000"));
+    QVERIFY(!opt.validateMomeConfiguration(&err)); // 1e8 cells
+    QVERIFY(err.contains("cells"));
   }
 
   // Save / load input file roundtrip test for the CLI-parsed MOME keywords.
@@ -1302,7 +1307,6 @@ void XtalOptUnitTest::momeArchiveInsertionOnEvaluation()
   QVERIFY(opt.processInputDescriptor("d0 /bin/true d0.out 0.0 100.0 10"));
   QVERIFY(opt.processInputDescriptor("d1 /bin/true d1.out -10.0 10.0 10"));
   QVERIFY(opt.validateMomeConfiguration());
-  opt.resetMomeArchive();
 
   // Same hull-building shape as resultsOutputsAreStable(), so the hull
   // calculation itself is a known-good setup; only descriptor values are
@@ -1350,20 +1354,30 @@ void XtalOptUnitTest::momeArchiveInsertionOnEvaluation()
 
   QVERIFY(opt.refreshStructureEvaluationData());
 
+  // Number of archived structures in grid cell (x, y) of the 10x10 grid.
+  auto cellSize = [&opt](int x, int y) {
+    for (const Search::SearchBase::MomeArchiveCell& c : opt.getMomeArchive()) {
+      if (c.cell == x * 10 + y)
+        return c.members.size();
+    }
+    return 0;
+  };
+
   // Distinct cells: exactly the one structure mapped there.
-  QCOMPARE(opt.momeArchiveCellSize(1, 1), 1);
-  QCOMPARE(opt.momeArchiveCellSize(2, 2), 1);
-  QCOMPARE(opt.momeArchiveCellSize(7, 7), 1);
-  QCOMPARE(opt.momeArchiveCellSize(3, 4), 1);
+  QCOMPARE(cellSize(1, 1), 1);
+  QCOMPARE(cellSize(2, 2), 1);
+  QCOMPARE(cellSize(7, 7), 1);
+  QCOMPARE(cellSize(3, 4), 1);
 
   // Shared cell (5,5): both TiO2 structures map here, but only one
   // objective (the built-in above-hull distance) is active, so this is a
   // single-objective competition. The on-hull structure (distance 0)
   // strictly dominates the above-hull one (distance > 0): only 1 survives.
-  QCOMPARE(opt.momeArchiveCellSize(5, 5), 1);
+  QCOMPARE(cellSize(5, 5), 1);
+  QCOMPARE(opt.getMomeArchive().size(), 5);
 
   // A cell nothing was mapped to has no archive entry.
-  QCOMPARE(opt.momeArchiveCellSize(0, 0), 0);
+  QCOMPARE(cellSize(0, 0), 0);
 }
 
 void XtalOptUnitTest::momeEndToEnd()
@@ -1412,7 +1426,6 @@ void XtalOptUnitTest::momeEndToEnd()
   QVERIFY(opt.processInputDescriptor(QString("d0 %1 d0.out 0.0 100.0 10").arg(d0Script)));
   QVERIFY(opt.processInputDescriptor(QString("d1 %1 d1.out -10.0 10.0 10").arg(d1Script)));
   QVERIFY(opt.validateMomeConfiguration());
-  opt.resetMomeArchive();
 
   auto buildXtal = [&tempDir](uint generation, uint id, int index, int nTi, int nO,
                               double enthalpy) -> Xtal* {
@@ -1481,7 +1494,16 @@ void XtalOptUnitTest::momeEndToEnd()
 
   // --- Real evaluation pass: descriptor mapping + Pareto insertion ---
   QVERIFY(opt.refreshStructureEvaluationData());
-  QCOMPARE(opt.momeArchiveCellSize(4, 6), 1);
+  {
+    bool found = false;
+    for (const Search::SearchBase::MomeArchiveCell& c : opt.getMomeArchive()) {
+      if (c.cell == 4 * 10 + 6) {
+        found = true;
+        QCOMPARE(c.members, QList<Search::Structure*>({ xtalOfInterest }));
+      }
+    }
+    QVERIFY(found);
+  }
 
   // --- Real parent selection reading the archive back out ---
   // Four cells are occupied (the structure of interest's cell, plus the

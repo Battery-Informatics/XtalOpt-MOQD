@@ -1918,13 +1918,31 @@ bool XtalOpt::validateMomeConfiguration(QString* errorMessage) const
   if (getOptimizationType() != Search::SearchBase::OT_MOME)
     return true;
 
-  if (getDescriptorsNum() != 2) {
+  if (getDescriptorsNum() < 1) {
     if (errorMessage)
-      *errorMessage = QString("MOME requires exactly 2 configured descriptors "
-                             "(found %1). Configure descriptor[0]/descriptor[1] "
-                             "as the two MOME grid axes.")
-                        .arg(getDescriptorsNum());
+      *errorMessage = QString("MOME requires at least 1 configured descriptor: "
+                              "the descriptors span the space that is split into cells.");
     return false;
+  }
+
+  if (getOptimizableObjectivesNum() < 1) {
+    if (errorMessage)
+      *errorMessage = QString("MOME requires at least 1 objective that takes part in the "
+                              "optimization.");
+    return false;
+  }
+
+  // Keep the grid at a size where "an occupied cell" still means something.
+  const long long maxCells = 1000000;
+  long long cells = 1;
+  for (int i = 0; i < getDescriptorsNum(); ++i) {
+    cells *= getDescriptorBins(i);
+    if (getDescriptorBins(i) < 1 || cells > maxCells) {
+      if (errorMessage)
+        *errorMessage = QString("MOME grid is invalid: every descriptor needs at least 1 bin "
+                                "and the total number of cells cannot exceed %1.").arg(maxCells);
+      return false;
+    }
   }
 
   return true;

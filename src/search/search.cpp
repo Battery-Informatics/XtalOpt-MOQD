@@ -733,10 +733,6 @@ void SearchBase::deleteTrackedStructures()
     ++m_selectionDataStamp;
   }
   tracker()->deleteAllStructures();
-
-  // Rebuilt fresh (or cleared, if not in OT_MOME) for every session: the
-  // MOME archive is never persisted or carried over between runs.
-  resetMomeArchive();
 }
 
 void SearchBase::performTheExit(int delay)
@@ -815,7 +811,8 @@ bool SearchBase::objectiveParticipatesInOptimization(int i) const
   if (type != SearchBase::Ot_Min && type != SearchBase::Ot_Max)
     return false;
 
-  if (m_paretoFilterZeroWeights && m_optimizationType == OT_Pareto &&
+  if (m_paretoFilterZeroWeights &&
+      (m_optimizationType == OT_Pareto || m_optimizationType == OT_MOME) &&
       std::fabs(getObjectivesWgt(i)) <= ZERO08)
     return false;
 
@@ -921,8 +918,15 @@ void SearchBase::normalizeObjData(std::vector<std::vector<double>>& objData) con
 bool SearchBase::parentPoolEligible(Structure* s) const
 {
   QReadLocker structureLocker(&s->lock());
-  return s->getStatus() == Structure::Optimized && !s->isSimilar() &&
-         hasCompleteObjectiveValues(*s);
+  if (s->getStatus() != Structure::Optimized || s->isSimilar() ||
+      !hasCompleteObjectiveValues(*s))
+    return false;
+  // MOME places every parent in a descriptor cell: it needs the descriptors too.
+  if (m_optimizationType == OT_MOME &&
+      (s->getStrucDescriptorState() != Structure::Ds_Retain ||
+       s->getStrucDescriptorNumber() != getDescriptorsNum()))
+    return false;
+  return true;
 }
 
 void SearchBase::refreshParentPoolMembership(Structure* s)
@@ -1120,6 +1124,8 @@ void SearchBase::rebuildParentSelectionData(const QList<Structure*>& structures)
 
   bool usePareto = (m_optimizationType == OT_Pareto) ? true : false;
   table.usePareto = usePareto;
+  const bool useMome = (m_optimizationType == OT_MOME);
+  table.useMome = useMome;
 
   std::vector<std::vector<double>> objData; // final optimization 2D input matrix
   QList<QString> strTags;                   // structures tags
@@ -1142,6 +1148,44 @@ void SearchBase::rebuildParentSelectionData(const QList<Structure*>& structures)
   if (usePareto) {
     strProb = paretoProbs(objData, m_crowdingDistance, strFrnt, strDist,
                           rawprob, rawdist);
+  } else if (useMome) {
+    // MOME: place every structure in its descriptor cell, and keep the
+    //   (size-limited) first Pareto front of each cell as the archive.
+    std::vector<std::vector<double>> descData(strNumb);
+    for (int i = 0; i < strNumb; ++i) {
+      QReadLocker lock(&structures[i]->lock());
+      if (structures[i]->getStrucDescriptorState() != Structure::Ds_Retain ||
+          structures[i]->getStrucDescriptorNumber() != getDescriptorsNum())
+        continue; // left empty: cannot be assigned to a cell
+      const QList<double> values = structures[i]->getStrucDescriptorValuesVec();
+      descData[i].assign(values.begin(), values.end());
+    }
+
+    MomeArchive archive = buildMomeArchive(objData, descData, momeTessellation(),
+                                           kMomeMaxFrontSize);
+
+    // Selection is cell-uniform, then crowding-biased inside the cell: the
+    //   equivalent per-structure probability is kept for reporting.
+    strProb.assign(strNumb, 0.0);
+    for (const MomeCell& cell : archive.cells) {
+      const std::vector<double> weights = crowdingSelectionWeights(cell.crowding);
+      double total = 0.0;
+      for (double w : weights)
+        total += w;
+      for (size_t k = 0; k < cell.members.size(); ++k) {
+        strProb[cell.members[k]] = weights[k] / total / archive.cells.size();
+        rawdist[cell.members[k]] = cell.crowding[k];
+      }
+    }
+    table.momeCells = std::move(archive.cells);
+    table.momeCellOf = std::move(archive.cellOf);
+
+    // The global fronts are not used by the selection; they are still
+    //   produced and saved (as in the basic optimization).
+    const std::vector<std::vector<int>> fronts = nonDominatedSorting(objData);
+    for (int i = 0; i < static_cast<int>(fronts.size()); i++)
+      for (int j = 0; j < static_cast<int>(fronts[i].size()); j++)
+        strFrnt[fronts[i][j]] = i;
   } else {
     // Basic selection expects the weights to sum to 1. Normalize the local
     //   copy here so selection does not depend on the application doing it.
@@ -1187,6 +1231,10 @@ void SearchBase::rebuildParentSelectionData(const QList<Structure*>& structures)
         debOuts += QString("Crowding: Yes\n");
       else
         debOuts += QString("Crowding: No\n");
+    } else if (useMome) {
+      debOuts += QString("Optimization type: MOME - Occupied cells: %1 of %2 - Max front size: %3\n")
+                   .arg(table.momeCells.size()).arg(momeTessellation().cellCount())
+                   .arg(kMomeMaxFrontSize);
     } else {
       debOuts += QString("Optimization type: Basic\n");
     }
@@ -1199,6 +1247,8 @@ void SearchBase::rebuildParentSelectionData(const QList<Structure*>& structures)
     debOuts += QString("   Tag and Normalized minimization matrix # Probs (finProb");
     if (usePareto) {
       debOuts += QString(", rawProb, Frnt, rawDist, sclDist");
+    } else if (useMome) {
+      debOuts += QString(", Cell, InArchive, rawDist");
     }
     debOuts += QString(")\n");
     for (int i = 0; i < strNumb; i++) {
@@ -1211,6 +1261,10 @@ void SearchBase::rebuildParentSelectionData(const QList<Structure*>& structures)
         debOuts += QString(" %1 ").arg(strFrnt[i],4);
         debOuts += QString(" %1 ").arg(rawdist[i],10,'f',6);
         debOuts += QString(" %1 ").arg(strDist[i],10,'f',6);
+      } else if (useMome) {
+        debOuts += QString(" %1 ").arg(table.momeCellOf[i],6);
+        debOuts += QString(" %1 ").arg(strProb[i] > 0.0 ? "yes" : "no",3);
+        debOuts += QString(" %1 ").arg(rawdist[i],10,'f',6);
       }
       debOuts += QString("\n");
     }
@@ -1225,42 +1279,58 @@ void SearchBase::rebuildParentSelectionData(const QList<Structure*>& structures)
   m_parentSelectionData = std::move(table);
 }
 
-Structure* SearchBase::selectParentFromMomeArchive() const
+MomeTessellation SearchBase::momeTessellation() const
 {
-  QReadLocker locker(&m_momeArchiveLock);
-  if (!m_momeArchive)
-    return nullptr;
-
-  // Standard MAP-Elites/MOME convention: pick a uniformly random *occupied
-  //   cell*, not a uniformly random archived structure. This gives every
-  //   discovered niche equal selection pressure regardless of how many
-  //   structures happen to share it, which is the whole point of the
-  //   descriptor grid (illumination, not just optimization).
-  QList<QPair<int, int>> occupied;
-  for (int x = 0; x < m_momeArchive->xBins(); ++x) {
-    for (int y = 0; y < m_momeArchive->yBins(); ++y) {
-      const MOMECell* cell = m_momeArchive->cell(x, y);
-      if (cell && !cell->isEmpty())
-        occupied.append(qMakePair(x, y));
-    }
+  MomeTessellation tess;
+  tess.kind = MomeTessellation::Grid;
+  for (int i = 0; i < getDescriptorsNum(); ++i) {
+    tess.lo.push_back(getDescriptorMin(i));
+    tess.hi.push_back(getDescriptorMax(i));
+    tess.bins.push_back(getDescriptorBins(i));
   }
-  if (occupied.isEmpty())
-    return nullptr;
+  return tess;
+}
 
-  const QPair<int, int>& coord = occupied.at(Common::getRandUInt(0, occupied.size() - 1));
-  const MOMECell* cell = m_momeArchive->cell(coord.first, coord.second);
-  const QVector<Structure*> members = cell->structures();
-  // cell was just confirmed non-empty above, so this is never empty.
-  return members.at(Common::getRandUInt(0, members.size() - 1));
+void SearchBase::ensureParentSelectionDataCurrent()
+{
+  // Update the selection data when the parent pool or selection settings change.
+  QReadLocker tableLocker(&m_parentSelectionDataLock);
+  if (!m_parentSelectionData.built ||
+      m_parentSelectionData.stamp != m_selectionDataStamp.load()) {
+    tableLocker.unlock();
+    QWriteLocker tableWriteLocker(&m_parentSelectionDataLock);
+    if (!m_parentSelectionData.built ||
+        m_parentSelectionData.stamp != m_selectionDataStamp.load())
+      rebuildParentSelectionData(m_parentPool.values());
+  }
+}
+
+QList<SearchBase::MomeArchiveCell> SearchBase::getMomeArchive()
+{
+  QList<MomeArchiveCell> cells;
+  if (m_optimizationType != OT_MOME)
+    return cells;
+
+  ensureParentSelectionDataCurrent();
+
+  QReadLocker tableLocker(&m_parentSelectionDataLock);
+  const ParentSelectionData& table = m_parentSelectionData;
+  if (!table.built || !table.valid || !table.useMome)
+    return cells;
+
+  for (const MomeCell& cell : table.momeCells) {
+    MomeArchiveCell out;
+    out.cell = cell.cell;
+    out.crowding = cell.crowding;
+    for (int member : cell.members)
+      out.members.append(table.pool.at(member));
+    cells.append(out);
+  }
+  return cells;
 }
 
 Structure* SearchBase::selectParentStructure(size_t poolSize)
 {
-  // MOME uses its own archive-based selection, entirely separate from the
-  //   pool/Pareto/scalar machinery below.
-  if (m_optimizationType == OT_MOME)
-    return selectParentFromMomeArchive();
-
   // Select a parent structure from the in-memory parent pool.
   //
   // We compute scalar probabilities from both the basic generalized fitness
@@ -1269,6 +1339,9 @@ Structure* SearchBase::selectParentStructure(size_t poolSize)
   //   - Basic  optimization (the scalar generalized fitness function)
   //   - Pareto optimization (tournament selection, with/without a restricted pool)
   //   - Pareto optimization (ranks/distances turned into scalar fitness)
+  //   - MOME   optimization (a uniformly chosen occupied descriptor cell, then
+  //                          a member of its Pareto front biased by crowding;
+  //                          the parents pool size is not used)
   //
   // For Pareto we may ignore the crowding distances if the user asks, and we
   //   apply the user's objective precision to the values throughout.
@@ -1279,18 +1352,7 @@ Structure* SearchBase::selectParentStructure(size_t poolSize)
     return nullptr;
 
   //============================ MAKE SURE THE SELECTION TABLE IS CURRENT
-  // Update the selection data when the parent pool or selection settings change.
-  {
-    QReadLocker tableLocker(&m_parentSelectionDataLock);
-    if (!m_parentSelectionData.built ||
-        m_parentSelectionData.stamp != m_selectionDataStamp.load()) {
-      tableLocker.unlock();
-      QWriteLocker tableWriteLocker(&m_parentSelectionDataLock);
-      if (!m_parentSelectionData.built ||
-          m_parentSelectionData.stamp != m_selectionDataStamp.load())
-        rebuildParentSelectionData(m_parentPool.values());
-    }
-  }
+  ensureParentSelectionDataCurrent();
 
   QReadLocker tableLocker(&m_parentSelectionDataLock);
   const ParentSelectionData& table = m_parentSelectionData;
@@ -1305,6 +1367,32 @@ Structure* SearchBase::selectParentStructure(size_t poolSize)
     return nullptr;
   if (table.noObjectives)
     return structures[Common::getRandUInt(0, structures.size() - 1)];
+
+  if (table.useMome) {
+    // Nothing could be archived (e.g. no usable descriptor values): any
+    //   pool member is as good as another.
+    if (table.momeCells.empty())
+      return structures[Common::getRandUInt(0, structures.size() - 1)];
+
+    const int cellIndex = Common::getRandUInt(0, table.momeCells.size() - 1);
+    const MomeCell& cell = table.momeCells[cellIndex];
+    const int member = sampleByCrowding(cell.crowding, Common::getRandDouble());
+    Structure* parent = structures[cell.members[member]];
+
+    if (m_debugOutput) {
+      QString outs = QString("\n   Selected (MOME) %1 from cell %2 (%3 occupied cells), front of %4:")
+        .arg(parent->getTag(),7).arg(cell.cell).arg(table.momeCells.size())
+        .arg(cell.members.size());
+      const std::vector<double> weights = crowdingSelectionWeights(cell.crowding);
+      for (size_t k = 0; k < cell.members.size(); ++k)
+        outs += QString("\n   %1   dist %2   weight %3")
+                  .arg(structures[cell.members[k]]->getTag(),7)
+                  .arg(cell.crowding[k],10,'f',6).arg(weights[k],10,'f',6);
+      outs += QString("\n\n");
+      Common::message(outs);
+    }
+    return parent;
+  }
 
   // Read the selection data.
   int strNumb = structures.size();
