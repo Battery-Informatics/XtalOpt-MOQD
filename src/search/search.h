@@ -1333,6 +1333,9 @@ public slots:
    */
   int getOptimizableObjectivesNum() const;
 
+  /** @return Whether objective @p i is one of the optimizable objectives. */
+  bool objectiveParticipatesInOptimization(int i) const;
+
   /**
    * Build the objective count and weight vector. Basic selection uses the
    * relative weights after normalizing a local copy. Pareto selection uses
@@ -1463,8 +1466,6 @@ private:
   {
     return !m_objectives.at(i).exe.isEmpty() || !m_objectives.at(i).out.isEmpty();
   }
-
-  bool objectiveParticipatesInOptimization(int i) const;
 
   // Entry in the template-keyword registry.
   struct KeywordEntry {

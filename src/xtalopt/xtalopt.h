@@ -715,6 +715,13 @@ protected:
   // Write the main XtalOpt results file.
   bool writeResultsFile(const QList<Search::Structure*>& structures, bool notify);
 
+  // The text content of the MOME archive file (see writeMomeArchiveFile()).
+  QString momeArchiveFileContents();
+
+  // Write the current MOME archive to mome-archive.txt in the working
+  //   directory (does nothing unless the optimization type is MOME).
+  bool writeMomeArchiveFile();
+
   // Record one convex-hull snapshot (the movie option)
   void queueHullSnapshot();
 

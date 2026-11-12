@@ -133,6 +133,107 @@ bool XtalOpt::writeResultsFile(const QList<Structure*>& structures, bool notify)
   return writeOutputFileWithBackup(resultsFilename, contents, __func__);
 }
 
+QString XtalOpt::momeArchiveFileContents()
+{
+  // The MOME archive in a form that is easy to post-process (coverage,
+  //   MOQD-score, hypervolumes, ...): one line per archived structure,
+  //   grouped by cell. Everything a reader needs to interpret the columns
+  //   is in the '#' header lines.
+  const Search::MomeTessellation tess = momeTessellation();
+  const bool cvt = (tess.kind == Search::MomeTessellation::Cvt);
+  const QList<MomeArchiveCell> cells = getMomeArchive();
+  const int descNum = getDescriptorsNum();
+
+  // Objectives that take part in the optimization (the ones the fronts are made of).
+  QList<int> objectives;
+  for (int i = 0; i < getObjectivesNum(); ++i) {
+    if (objectiveParticipatesInOptimization(i))
+      objectives.append(i);
+  }
+
+  int structuresNum = 0;
+  for (const MomeArchiveCell& cell : cells)
+    structuresNum += cell.members.size();
+
+  QString contents;
+  QTextStream out(&contents);
+  out << QString("# MOME archive: tessellation=%1 cells=%2 occupied=%3 structures=%4 maxFrontSize=%5\n")
+           .arg(cvt ? "cvt" : "grid").arg(tess.cellCount()).arg(cells.size())
+           .arg(structuresNum).arg(getMomeMaxFrontSize());
+
+  out << "# descriptors:";
+  for (int i = 0; i < descNum; ++i) {
+    out << QString(" %1 [%2, %3]").arg(getDescriptorName(i))
+             .arg(getDescriptorMin(i)).arg(getDescriptorMax(i));
+    if (!cvt)
+      out << QString(" bins=%1").arg(getDescriptorBins(i));
+    out << (i + 1 < descNum ? ";" : "");
+  }
+  out << "\n";
+
+  out << "# objectives (original values):";
+  for (int k = 0; k < objectives.size(); ++k) {
+    const int i = objectives.at(k);
+    const QString name = (i == getBuiltinObjectiveIndex()) ? QString("aboveHull")
+                                                           : getObjectivesOut(i);
+    out << QString(" %1 (%2)").arg(name)
+             .arg(getObjectivesTyp(i) == Search::SearchBase::Ot_Max ? "max" : "min")
+        << (k + 1 < objectives.size() ? ";" : "");
+  }
+  out << "\n";
+
+  out << QString("# columns: cell, %1 (%2 values), tag, objectives (%3 values), "
+                 "descriptors (%2 values), crowding distance in the cell's front\n")
+           .arg(cvt ? "cell centroid in descriptor units" : "bin index per descriptor")
+           .arg(descNum).arg(objectives.size());
+
+  const int digits = std::numeric_limits<double>::max_digits10;
+  for (const MomeArchiveCell& cell : cells) {
+    const std::vector<int> bins = Search::gridCellCoords(cell.cell, tess);
+    for (int m = 0; m < cell.members.size(); ++m) {
+      Structure* structure = cell.members.at(m);
+      QReadLocker structureLocker(&structure->lock());
+      if (structure->getStrucObjNumber() != getObjectivesNum() ||
+          structure->getStrucDescriptorNumber() != descNum)
+        continue; // changed since the archive was built: it will be rebuilt
+
+      out << cell.cell;
+      for (int i = 0; i < descNum; ++i) {
+        if (cvt) {
+          const double c = tess.centroids[cell.cell][i];
+          out << " " << QString::number(tess.lo[i] + c * (tess.hi[i] - tess.lo[i]), 'g', 10);
+        } else {
+          out << " " << bins[i];
+        }
+      }
+      out << " " << structure->getTag();
+      for (int i : objectives)
+        out << " " << QString::number(structure->getStrucObjValues(i), 'g', digits);
+      for (int i = 0; i < descNum; ++i)
+        out << " " << QString::number(structure->getStrucDescriptorValues(i), 'g', digits);
+      const double crowding = cell.crowding[m];
+      out << " " << (GS_ISINF(crowding) ? QString("inf") : QString::number(crowding, 'g', 10));
+      out << "\n";
+    }
+  }
+  return contents;
+}
+
+bool XtalOpt::writeMomeArchiveFile()
+{
+  if (getOptimizationType() != Search::SearchBase::OT_MOME || getLocWorkDir().isEmpty())
+    return true;
+
+  if (!QDir().mkpath(getLocWorkDir())) {
+    Common::error(QString("%1: could not create local work directory %2...")
+                    .arg(__func__).arg(getLocWorkDir()));
+    return false;
+  }
+
+  return writeOutputFileWithBackup(Common::localPath(getLocWorkDir(), "mome-archive.txt"),
+                                   momeArchiveFileContents(), __func__);
+}
+
 QString XtalOpt::hullFileContents(const QList<Structure*>& structures)
 {
   QString contents;
@@ -229,6 +330,10 @@ bool XtalOpt::saveRequestedOutputFiles(bool saveAll, bool showProgress)
     frontsChanged = applyParentSelectionFronts();
 
     if (saveResults && !writeResultsFile(structures, showProgress))
+      resultsFailed = true;
+
+    // The MOME archive goes with the results: same moments, same retry.
+    if (saveResults && !writeMomeArchiveFile())
       resultsFailed = true;
 
     // Check if we have local work dir set for hull file

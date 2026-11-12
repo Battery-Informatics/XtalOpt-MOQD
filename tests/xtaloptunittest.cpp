@@ -1428,6 +1428,37 @@ void XtalOptUnitTest::momeArchiveInsertionOnEvaluation()
 
   // A cell nothing was mapped to has no archive entry.
   QCOMPARE(cellSize(0, 0), 0);
+
+  // The archive dump: header lines, then one line per archived structure.
+  const QStringList lines = opt.momeArchiveFileContents().split('\n', QtCompat::SkipEmptyParts);
+  QCOMPARE(lines.at(0), QString("# MOME archive: tessellation=grid cells=100 occupied=5 "
+                                "structures=5 maxFrontSize=10"));
+  QCOMPARE(lines.at(1), QString("# descriptors: d0 [0, 100] bins=10; d1 [-10, 10] bins=10"));
+  QCOMPARE(lines.at(2), QString("# objectives (original values): aboveHull (min)"));
+  QVERIFY(lines.at(3).startsWith("# columns: cell, bin index per descriptor (2 values), tag"));
+  QCOMPARE(lines.size(), 4 + 5);
+  QStringList tags;
+  for (int i = 4; i < lines.size(); ++i) {
+    // cell, 2 bin indices, tag, 1 objective, 2 descriptors, crowding
+    const QStringList fields = lines.at(i).split(' ', QtCompat::SkipEmptyParts);
+    QCOMPARE(fields.size(), 8);
+    QCOMPARE(fields.at(0).toInt(), fields.at(1).toInt() * 10 + fields.at(2).toInt());
+    tags << fields.at(3);
+  }
+  QCOMPARE(tags, QStringList({ "1x1", "1x2", "2x2", "1x3", "2x1" })); // ordered by cell
+  // The on-hull TiO2 structure in cell (5,5): zero above hull, its raw descriptors.
+  QCOMPARE(lines.at(4 + 3), QString("55 5 5 1x3 0 50 0 0"));
+
+  QVERIFY(opt.writeMomeArchiveFile());
+  QFile archiveFile(tempPath(tempDir, "mome-archive.txt"));
+  QVERIFY(archiveFile.open(QIODevice::ReadOnly | QIODevice::Text));
+  QCOMPARE(QString::fromUtf8(archiveFile.readAll()), opt.momeArchiveFileContents());
+
+  // Other optimization types do not write the file.
+  QVERIFY(archiveFile.remove());
+  QVERIFY(opt.setOptimizationTypeText("basic"));
+  QVERIFY(opt.writeMomeArchiveFile());
+  QVERIFY(!archiveFile.exists());
 }
 
 void XtalOptUnitTest::momeEndToEnd()
