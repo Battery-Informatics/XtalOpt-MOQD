@@ -1116,29 +1116,31 @@ void XtalOptUnitTest::descriptorInputSyntax()
   opt.resetDescriptors();
   QCOMPARE(opt.getDescriptorsNum(), 0);
 
-  // Valid single descriptor (5-token syntax: name exe out min max)
-  QVERIFY(opt.processInputDescriptor("density ./calc_density.sh density.out 0.0 5.0"));
+  // Valid single descriptor (6-token syntax: name exe out min max bins)
+  QVERIFY(opt.processInputDescriptor("density ./calc_density.sh density.out 0.0 5.0 8"));
   QCOMPARE(opt.getDescriptorsNum(), 1);
   QCOMPARE(opt.getDescriptorName(0), QString("density"));
   QCOMPARE(opt.getDescriptorExe(0), QString("./calc_density.sh"));
   QCOMPARE(opt.getDescriptorOut(0), QString("density.out"));
   QCOMPARE(opt.getDescriptorMin(0), 0.0);
   QCOMPARE(opt.getDescriptorMax(0), 5.0);
+  QCOMPARE(opt.getDescriptorBins(0), 8);
 
   // Multiple descriptors, each with independent bounds
-  QVERIFY(opt.processInputDescriptor("bandgap ./calc_bandgap.py gap.out 0.0 10.0"));
+  QVERIFY(opt.processInputDescriptor("bandgap ./calc_bandgap.py gap.out 0.0 10.0 10"));
   QCOMPARE(opt.getDescriptorsNum(), 2);
   QCOMPARE(opt.getDescriptorName(1), QString("bandgap"));
   QCOMPARE(opt.getDescriptorExe(1), QString("./calc_bandgap.py"));
   QCOMPARE(opt.getDescriptorOut(1), QString("gap.out"));
   QCOMPARE(opt.getDescriptorMin(1), 0.0);
   QCOMPARE(opt.getDescriptorMax(1), 10.0);
+  QCOMPARE(opt.getDescriptorBins(1), 10);
   // First descriptor's bounds are unaffected by the second's.
   QCOMPARE(opt.getDescriptorMin(0), 0.0);
   QCOMPARE(opt.getDescriptorMax(0), 5.0);
 
   // Negative but valid bounds.
-  QVERIFY(opt.processInputDescriptor("signedval ./calc_signed.sh signed.out -10.0 10.0"));
+  QVERIFY(opt.processInputDescriptor("signedval ./calc_signed.sh signed.out -10.0 10.0 10"));
   QCOMPARE(opt.getDescriptorsNum(), 3);
   QCOMPARE(opt.getDescriptorMin(2), -10.0);
   QCOMPARE(opt.getDescriptorMax(2), 10.0);
@@ -1149,9 +1151,17 @@ void XtalOptUnitTest::descriptorInputSyntax()
   QVERIFY(!opt.processInputDescriptor("only_two_tokens ./script.sh"));
   QVERIFY(!opt.processInputDescriptor("density ./calc_density.sh density.out"));
   QVERIFY(!opt.processInputDescriptor("density ./calc_density.sh density.out 0.0"));
+  // The old 5-token syntax (no bins) is no longer accepted either.
+  QVERIFY(!opt.processInputDescriptor("density ./calc_density.sh density.out 0.0 5.0"));
 
   // Malformed descriptors: too many tokens.
-  QVERIFY(!opt.processInputDescriptor("six tokens in total ./script.sh out.txt 0.0 1.0"));
+  QVERIFY(!opt.processInputDescriptor("seven tokens in total ./script.sh out.txt 0.0 1.0 10"));
+
+  // bins must be an integer of at least 1.
+  QVERIFY(!opt.processInputDescriptor("desc ./script.sh out1.txt 0.0 1.0 0"));
+  QVERIFY(!opt.processInputDescriptor("desc ./script.sh out1.txt 0.0 1.0 -4"));
+  QVERIFY(!opt.processInputDescriptor("desc ./script.sh out1.txt 0.0 1.0 2.5"));
+  QVERIFY(!opt.processInputDescriptor("desc ./script.sh out1.txt 0.0 1.0 many"));
 
   // min/max must be finite numbers: reject non-numeric tokens (covers NaN/Inf text forms).
   QVERIFY(!opt.processInputDescriptor("desc ./script.sh out1.txt nan 1.0"));
@@ -1159,30 +1169,30 @@ void XtalOptUnitTest::descriptorInputSyntax()
   QVERIFY(!opt.processInputDescriptor("desc ./script.sh out1.txt -inf 1.0"));
 
   // min == max must be rejected.
-  QVERIFY(!opt.processInputDescriptor("desc ./script.sh out1.txt 1.0 1.0"));
+  QVERIFY(!opt.processInputDescriptor("desc ./script.sh out1.txt 1.0 1.0 10"));
 
   // min > max must be rejected.
-  QVERIFY(!opt.processInputDescriptor("desc ./script.sh out1.txt 5.0 1.0"));
+  QVERIFY(!opt.processInputDescriptor("desc ./script.sh out1.txt 5.0 1.0 10"));
 
   // None of the rejected entries above should have been added.
   QCOMPARE(opt.getDescriptorsNum(), 2);
 
   // Output filename validation error (e.g. empty or directory separator in output filename)
-  QVERIFY(!opt.processInputDescriptor("desc ./script.sh path/to/out.txt 0.0 1.0"));
+  QVERIFY(!opt.processInputDescriptor("desc ./script.sh path/to/out.txt 0.0 1.0 10"));
 
   // Descriptor lines accessor format
   QStringList lines = opt.descriptorLines();
   QCOMPARE(lines.size(), 2);
-  QCOMPARE(lines.at(0), QString("density ./calc_density.sh density.out 0 5"));
-  QCOMPARE(lines.at(1), QString("bandgap ./calc_bandgap.py gap.out 0 10"));
+  QCOMPARE(lines.at(0), QString("density ./calc_density.sh density.out 0 5 8"));
+  QCOMPARE(lines.at(1), QString("bandgap ./calc_bandgap.py gap.out 0 10 10"));
 
   // Existing reset behavior still works.
   opt.resetDescriptors();
   QCOMPARE(opt.getDescriptorsNum(), 0);
 
   // Re-add for the save/load roundtrip test below.
-  QVERIFY(opt.processInputDescriptor("density ./calc_density.sh density.out 0.0 5.0"));
-  QVERIFY(opt.processInputDescriptor("bandgap ./calc_bandgap.py gap.out 0.0 10.0"));
+  QVERIFY(opt.processInputDescriptor("density ./calc_density.sh density.out 0.0 5.0 10"));
+  QVERIFY(opt.processInputDescriptor("bandgap ./calc_bandgap.py gap.out 0.0 10.0 10"));
 
   // Save / load input file roundtrip test
   opt.setInputFormulasString("Ti1O2");
@@ -1219,25 +1229,12 @@ void XtalOptUnitTest::momeConfiguration()
     QCOMPARE(opt.getOptimizationType(), Search::SearchBase::OT_MOME);
   }
 
-  // Grid-bin accessors: default to 10x10 (matching the per-cell Pareto
-  // capacity precedent), and are independently settable.
-  {
-    XtalOpt opt;
-    QCOMPARE(opt.getMomeGridXBins(), 10);
-    QCOMPARE(opt.getMomeGridYBins(), 10);
-
-    opt.setMomeGridXBins(20);
-    opt.setMomeGridYBins(5);
-    QCOMPARE(opt.getMomeGridXBins(), 20);
-    QCOMPARE(opt.getMomeGridYBins(), 5);
-  }
-
   // Non-MOME optimization types never require any particular descriptor
   // count.
   {
     XtalOpt opt;
     QVERIFY(opt.validateMomeConfiguration());
-    QVERIFY(opt.processInputDescriptor("density ./calc_density.sh density.out 0.0 5.0"));
+    QVERIFY(opt.processInputDescriptor("density ./calc_density.sh density.out 0.0 5.0 10"));
     QVERIFY(opt.validateMomeConfiguration()); // still fine: only 1, but not MOME
   }
 
@@ -1250,13 +1247,13 @@ void XtalOptUnitTest::momeConfiguration()
     QVERIFY(!opt.validateMomeConfiguration(&err)); // 0 descriptors
     QVERIFY(err.contains("2"));
 
-    QVERIFY(opt.processInputDescriptor("density ./calc_density.sh density.out 0.0 5.0"));
+    QVERIFY(opt.processInputDescriptor("density ./calc_density.sh density.out 0.0 5.0 10"));
     QVERIFY(!opt.validateMomeConfiguration()); // 1 descriptor: still invalid
 
-    QVERIFY(opt.processInputDescriptor("bandgap ./calc_bandgap.py gap.out 0.0 10.0"));
+    QVERIFY(opt.processInputDescriptor("bandgap ./calc_bandgap.py gap.out 0.0 10.0 10"));
     QVERIFY(opt.validateMomeConfiguration()); // exactly 2: valid
 
-    QVERIFY(opt.processInputDescriptor("extra ./calc_extra.sh extra.out 0.0 1.0"));
+    QVERIFY(opt.processInputDescriptor("extra ./calc_extra.sh extra.out 0.0 1.0 10"));
     QVERIFY(!opt.validateMomeConfiguration()); // 3 descriptors: invalid again
   }
 
@@ -1264,10 +1261,8 @@ void XtalOptUnitTest::momeConfiguration()
   {
     XtalOpt opt;
     QVERIFY(opt.setOptimizationTypeText("mome"));
-    opt.setMomeGridXBins(7);
-    opt.setMomeGridYBins(13);
-    QVERIFY(opt.processInputDescriptor("density ./calc_density.sh density.out 0.0 5.0"));
-    QVERIFY(opt.processInputDescriptor("bandgap ./calc_bandgap.py gap.out 0.0 10.0"));
+    QVERIFY(opt.processInputDescriptor("density ./calc_density.sh density.out 0.0 5.0 7"));
+    QVERIFY(opt.processInputDescriptor("bandgap ./calc_bandgap.py gap.out 0.0 10.0 13"));
     opt.setInputFormulasString("Ti1O2");
 
     QTemporaryDir tempDir;
@@ -1279,9 +1274,9 @@ void XtalOptUnitTest::momeConfiguration()
     reloaded.setRunMode(XtalOpt::RunModeReadOnly);
     QVERIFY(reloaded.loadInputFile(inputPath, true, false));
     QCOMPARE(reloaded.getOptimizationType(), Search::SearchBase::OT_MOME);
-    QCOMPARE(reloaded.getMomeGridXBins(), 7);
-    QCOMPARE(reloaded.getMomeGridYBins(), 13);
     QCOMPARE(reloaded.getDescriptorsNum(), 2);
+    QCOMPARE(reloaded.getDescriptorBins(0), 7);
+    QCOMPARE(reloaded.getDescriptorBins(1), 13);
     QVERIFY(reloaded.validateMomeConfiguration());
   }
 }
@@ -1304,10 +1299,8 @@ void XtalOptUnitTest::momeArchiveInsertionOnEvaluation()
   opt.compList().append(comp);
 
   QVERIFY(opt.setOptimizationTypeText("mome"));
-  QVERIFY(opt.processInputDescriptor("d0 /bin/true d0.out 0.0 100.0"));
-  QVERIFY(opt.processInputDescriptor("d1 /bin/true d1.out -10.0 10.0"));
-  opt.setMomeGridXBins(10);
-  opt.setMomeGridYBins(10);
+  QVERIFY(opt.processInputDescriptor("d0 /bin/true d0.out 0.0 100.0 10"));
+  QVERIFY(opt.processInputDescriptor("d1 /bin/true d1.out -10.0 10.0 10"));
   QVERIFY(opt.validateMomeConfiguration());
   opt.resetMomeArchive();
 
@@ -1416,10 +1409,8 @@ void XtalOptUnitTest::momeEndToEnd()
   }
 
   QVERIFY(opt.setOptimizationTypeText("mome"));
-  QVERIFY(opt.processInputDescriptor(QString("d0 %1 d0.out 0.0 100.0").arg(d0Script)));
-  QVERIFY(opt.processInputDescriptor(QString("d1 %1 d1.out -10.0 10.0").arg(d1Script)));
-  opt.setMomeGridXBins(10);
-  opt.setMomeGridYBins(10);
+  QVERIFY(opt.processInputDescriptor(QString("d0 %1 d0.out 0.0 100.0 10").arg(d0Script)));
+  QVERIFY(opt.processInputDescriptor(QString("d1 %1 d1.out -10.0 10.0 10").arg(d1Script)));
   QVERIFY(opt.validateMomeConfiguration());
   opt.resetMomeArchive();
 

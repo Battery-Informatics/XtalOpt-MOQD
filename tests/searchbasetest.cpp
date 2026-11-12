@@ -1254,8 +1254,6 @@ void SearchBaseTest::momeArchiveWiring()
   m_opt->resetDescriptors();
   m_opt->addDescriptor("d0", "/bin/true", "d0.out", 0.0, 100.0);
   m_opt->addDescriptor("d1", "/bin/true", "d1.out", -10.0, 10.0);
-  m_opt->setMomeGridXBins(10);
-  m_opt->setMomeGridYBins(10);
   m_opt->resetMomeArchive();
 
   QVERIFY(m_opt->insertIntoMomeArchive(50.0, 0.0, { 1.0, 1.0 }, &a, x, y));
@@ -1284,8 +1282,6 @@ void SearchBaseTest::momeParentSelection()
   m_opt->resetDescriptors();
   m_opt->addDescriptor("d0", "/bin/true", "d0.out", 0.0, 100.0);
   m_opt->addDescriptor("d1", "/bin/true", "d1.out", -10.0, 10.0);
-  m_opt->setMomeGridXBins(10);
-  m_opt->setMomeGridYBins(10);
   m_opt->resetMomeArchive();
 
   // An empty archive has nothing to select from.

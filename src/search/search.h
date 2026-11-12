@@ -142,20 +142,21 @@ public:
   /**
    * Definition of one user-defined descriptor calculation script.
    *
-   * min/max define the descriptor's bounds for MOME grid mapping (the
-   * range of values the grid's axis for this descriptor spans).
+   * min/max define the descriptor's bounds for MOME cell mapping (the
+   * range of values this descriptor's axis spans); bins is the number of
+   * grid bins along that axis (used by the grid tessellation only).
    */
   struct DescriptorInfo
   {
     DescriptorInfo()
-      : min(0.0), max(0.0)
+      : min(0.0), max(0.0), bins(10)
     {
     }
 
     DescriptorInfo(const QString& descriptorName, const QString& executable, const QString& outputFile,
-                  double descriptorMin = 0.0, double descriptorMax = 0.0)
+                  double descriptorMin = 0.0, double descriptorMax = 0.0, int descriptorBins = 10)
       : name(descriptorName), exe(executable), out(outputFile),
-        min(descriptorMin), max(descriptorMax)
+        min(descriptorMin), max(descriptorMax), bins(descriptorBins)
     {
     }
 
@@ -164,6 +165,7 @@ public:
     QString out;
     double min;
     double max;
+    int bins;
   };
 
   /**
@@ -607,9 +609,10 @@ public:
 
   // User-defined descriptors: retrieve and modify descriptors
   void addDescriptor(const QString& name = QString(), const QString& exe = QString(),
-                     const QString& out = QString(), double min = 0.0, double max = 0.0)
+                     const QString& out = QString(), double min = 0.0, double max = 0.0,
+                     int bins = 10)
   {
-    m_descriptors.push_back(DescriptorInfo(name, exe, out, min, max));
+    m_descriptors.push_back(DescriptorInfo(name, exe, out, min, max, bins));
   }
 
   int getDescriptorsNum() const { return m_descriptors.size(); }
@@ -618,6 +621,7 @@ public:
   QString getDescriptorOut(int i) const { return m_descriptors.at(i).out; }
   double  getDescriptorMin(int i) const { return m_descriptors.at(i).min; }
   double  getDescriptorMax(int i) const { return m_descriptors.at(i).max; }
+  int     getDescriptorBins(int i) const { return m_descriptors.at(i).bins; }
   void resetDescriptors() { m_descriptors.clear(); }
   void removeDescriptor(int i) { m_descriptors.removeAt(i); }
 
@@ -628,14 +632,9 @@ public:
   // whole-population Pareto-front ranking for parent selection.
   //
 
-  int getMomeGridXBins() const { return m_momeGridXBins; }
-  void setMomeGridXBins(int v) { m_momeGridXBins = v; }
-  int getMomeGridYBins() const { return m_momeGridYBins; }
-  void setMomeGridYBins(int v) { m_momeGridYBins = v; }
-
   /**
-   * (Re)build an empty MOME archive sized getMomeGridXBins() x
-   * getMomeGridYBins() when getOptimizationType() == OT_MOME, or clear it
+   * (Re)build an empty MOME archive sized by the bins of descriptor[0] x
+   * descriptor[1] when getOptimizationType() == OT_MOME, or clear it
    * (leaving it absent) otherwise. Called once at the start of every
    * session (see deleteTrackedStructures()), so the archive is never
    * persisted or carried over between runs.
@@ -644,7 +643,8 @@ public:
   {
     QWriteLocker locker(&m_momeArchiveLock);
     if (m_optimizationType == OT_MOME)
-      m_momeArchive.reset(new MOMEGrid(m_momeGridXBins, m_momeGridYBins));
+      m_momeArchive.reset(new MOMEGrid(getDescriptorsNum() > 0 ? getDescriptorBins(0) : 1,
+                                       getDescriptorsNum() > 1 ? getDescriptorBins(1) : 1));
     else
       m_momeArchive.reset();
   }
@@ -1487,8 +1487,6 @@ private:
   bool m_paretoFilterZeroWeights;
 
   // MOME archive (only built/used when m_optimizationType == OT_MOME).
-  int m_momeGridXBins = 10;
-  int m_momeGridYBins = 10;
   std::unique_ptr<MOMEGrid> m_momeArchive;
   mutable QReadWriteLock m_momeArchiveLock;
 
